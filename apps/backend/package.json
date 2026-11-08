@@ -1,0 +1,32 @@
+{
+  "name": "@swarmcompute/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SwarmCompute backend: agent engine, contract integration, event indexer, API.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "agents:run": "tsx src/scripts/run-agents.ts",
+    "testnet:setup": "tsx src/scripts/testnet-setup.ts",
+    "sync:run": "tsx src/scripts/sync-run.ts",
+    "settle:run": "tsx src/scripts/settle-run.ts",
+    "demo:run": "tsx src/scripts/demo-run.ts",
+    "api:start": "tsx src/api/server.ts"
+  },
+  "dependencies": {
+    "@swarmcompute/shared": "workspace:*",
+    "dotenv": "16.4.5",
+    "near-api-js": "7.4.0",
+    "pg": "8.13.1",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "@types/pg": "8.11.10",
+    "tsx": "4.19.2",
+    "typescript": "5.6.3",
+    "vitest": "2.1.4"
+  }
+}

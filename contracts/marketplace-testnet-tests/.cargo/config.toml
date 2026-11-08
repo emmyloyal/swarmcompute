@@ -1,0 +1,4 @@
+# near-workspaces -> near-crypto -> aws-lc-sys needs NASM on Windows; use the
+# pre-assembled objects shipped with the crate instead.
+[env]
+AWS_LC_SYS_PREBUILT_NASM = "1"

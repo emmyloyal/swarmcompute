@@ -1,0 +1,17 @@
+[package]
+name = "marketplace-testnet-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Real-chain integration tests for the marketplace contract on NEAR Testnet"
+
+# The local NEAR sandbox has no Windows build (near-sandbox supports Linux x86 /
+# macOS ARM only), so these tests run against NEAR Testnet. See
+# contracts/marketplace/README.md.
+
+[dev-dependencies]
+near-workspaces = { version = "0.24.0", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+anyhow = "1"
+serde_json = "1"
+sha2 = "0.10"

@@ -1,0 +1,28 @@
+# Secrets — never commit keys or seed phrases (RULES.md R6)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+**/credentials/
+.near-credentials/
+
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Rust / cargo-near
+target/
+contracts/**/res/
+
+# Frontend
+.next/
+.vite/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

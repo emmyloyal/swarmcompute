@@ -1,0 +1,22 @@
+{
+  "name": "@swarmcompute/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Types, Zod schemas, money arithmetic, commitment hashing and message signing shared by backend and agents.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "typescript": "5.6.3",
+    "vitest": "2.1.4"
+  }
+}

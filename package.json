@@ -1,0 +1,18 @@
+{
+  "name": "swarmcompute",
+  "private": true,
+  "description": "Autonomous GPU marketplace demo: simulated AI buyer/seller agents, real escrow and settlement on NEAR Testnet.",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:up": "docker compose up -d postgres",
+    "db:migrate": "pnpm --filter @swarmcompute/backend db:migrate"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}

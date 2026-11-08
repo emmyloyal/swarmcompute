@@ -1,0 +1,5 @@
+# near-sdk's unit-testing feature pulls in aws-lc-sys (via near-crypto), which
+# needs NASM on Windows. Use the pre-assembled objects shipped with the crate
+# instead of requiring a NASM install. No effect on the wasm contract build.
+[env]
+AWS_LC_SYS_PREBUILT_NASM = "1"

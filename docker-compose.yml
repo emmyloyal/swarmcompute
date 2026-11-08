@@ -1,0 +1,20 @@
+# Local development database only. Not used for anything on-chain.
+services:
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: swarm
+      POSTGRES_PASSWORD: swarm_dev_only
+      POSTGRES_DB: swarmcompute
+    ports:
+      - "5432:5432"
+    volumes:
+      - swarm_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swarm -d swarmcompute"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  swarm_pg:

@@ -64,12 +64,6 @@ export async function getJson<T>(path: string): Promise<T> {
   return DATA_SOURCE === "snapshot" ? getSnapshot<T>(path) : fetchJson<T>(`${API_BASE}${path}`, path);
 }
 
-export interface SnapshotInfo {
-  taken_at: string;
-  contract_id: string;
-  purchases: number;
-}
-
 export interface Loaded<T> {
   data: T | undefined;
   error: string | undefined;

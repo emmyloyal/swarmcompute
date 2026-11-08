@@ -251,12 +251,3 @@ a.pill:hover { text-decoration: none; filter: brightness(0.97); }
   .main { padding: 24px 16px 48px; }
 }
 
-.snapshot-banner {
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border: 1px solid var(--sim-line);
-  border-radius: var(--radius-sm);
-  background: var(--sim-soft);
-  color: var(--sim-ink);
-  font-size: 13.5px;
-}

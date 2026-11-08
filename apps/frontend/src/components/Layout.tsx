@@ -1,6 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { DATA_SOURCE, useMeta, type SnapshotInfo } from "../lib/api";
+import { useMeta } from "../lib/api";
 import { short } from "../lib/format";
 import { AccountLink, OnChain, Simulated } from "./ui";
 import { WalletConnect } from "./WalletConnect";
@@ -65,26 +64,9 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
-        {DATA_SOURCE === "snapshot" && <SnapshotBanner />}
         <Outlet />
       </main>
     </div>
   );
 }
 
-/** Static deployments show recorded data; say so, and when it was taken. */
-function SnapshotBanner() {
-  const [info, setInfo] = useState<SnapshotInfo>();
-  useEffect(() => {
-    fetch("/snapshot/info.json")
-      .then((r) => (r.ok ? r.json() : undefined))
-      .then(setInfo, () => undefined);
-  }, []);
-  return (
-    <div className="snapshot-banner" role="note">
-      <b>Recorded snapshot, not live.</b>
-      {info && <> Taken {new Date(info.taken_at).toLocaleString()} · {info.purchases} purchases.</>} Auctions and countdowns
-      show their state at that moment.
-    </div>
-  );
-}

@@ -1,6 +1,6 @@
 # SwarmCompute
 
-An autonomous GPU marketplace where AI agents pool their demand, sellers compete on price, and every buyer in a group pays the same fair price, settled through on-chain escrow.
+An autonomous GPU marketplace where AI buyer agents team up into one order, sellers compete for it in a sealed-bid auction, and every buyer in the group pays the same fair price, held in on-chain escrow until delivery is verified.
 
 > This is a demo running on NEAR Testnet. Agents, GPU delivery and verification are simulated. See [What is real and what is simulated](#what-is-real-and-what-is-simulated) before drawing conclusions.
 
@@ -18,22 +18,22 @@ AI agents increasingly need to buy compute on their own, without a human negotia
 
 ## How SwarmCompute addresses it
 
-**Buyer coalitions make small buyers worth competing for.** Buyer agents with compatible needs (same GPU, enough VRAM, compatible deadlines) group into one larger order that sellers bid on.
+**Buyer coalitions make small buyers worth competing for.** Buyer agents with compatible needs (same GPU, enough VRAM, compatible deadlines) group into one larger order that sellers bid on. Each coalition is kept small enough that at least two sellers can fill it, so the auction always has competition. A buyer whose maximum price is below the going market rate is left out rather than added, because one low maximum would lower the whole group's ceiling and could leave no eligible bid.
 
 **Sealed-bid reverse auctions set the price.** Each seller first commits to a hidden bid, then reveals it, so no seller can see the others' bids and undercut them at the last second. The lowest eligible bid wins.
 
-**One fair price for every member.** The winning bid becomes the coalition's *clearing price*. Every member pays `its hours × the clearing price`, the same rate as everyone else and never more than its own maximum. Before bidding, each buyer prepays its own maximum from its own wallet. Whatever it paid above the clearing price is returned to that wallet as soon as the auction closes.
+**One fair price for every member.** The winning bid becomes the coalition's *clearing price*. Every member pays `its hours × the clearing price`, the same rate as everyone else and never more than its own maximum. Before bidding, each buyer prepays its own maximum from its own wallet. Whatever it paid above the clearing price is credited back to it when the auction closes and then sent to its wallet.
 
 **On-chain escrow holds the money until delivery is verified.** The seller is paid only after delivery is verified. If delivery fails, or a deadline passes, each buyer gets its money back in its own wallet. The contract also guarantees money can only go to the awarded seller or back to the buyer who paid it, and never twice.
 
-**On-chain reputation keeps a track record.** Each auction win, completed delivery, failed delivery and unrevealed bid updates the seller's reputation on-chain. Reputation breaks ties between equal bids.
+**On-chain reputation keeps a track record.** Each auction win, completed delivery, failed delivery and unrevealed bid updates the seller's reputation on-chain. Anyone can check it, and the contract uses it to break ties between equal bids. It doesn't otherwise affect which bid wins.
 
 ## How a purchase flows
 
 1. Buyer agents post their needs, and a coalition forms (deterministically, from a seed).
 2. Each member prepays **hours × its own maximum price** into escrow, from its own wallet.
 3. Seller agents commit sealed bids, then reveal them; the contract checks every reveal against its commitment.
-4. The lowest eligible bid wins. Every member owes **hours × that clearing price**, and the rest of its prepayment goes back to its wallet.
+4. The lowest eligible bid wins. Every member owes **hours × that clearing price**. The rest of its prepayment is credited back when the auction closes, then sent to its wallet.
 5. GPU delivery happens and is verified (both simulated in this demo).
 6. On success, escrow pays the seller. On failure (including partial delivery), each member gets its payment back. Reputation is updated by the contract.
 
@@ -48,6 +48,7 @@ SwarmCompute is a demonstration, and it is **not** a trustless system. To be spe
 - Seller agents are **simulated**; their payout accounts are **real** testnet accounts.
 - GPU provisioning, delivery and delivery verification are **simulated**.
 - Prepayments, escrow, the clearing-price settlement, payouts, refunds, returned balances and reputation execute on **NEAR Testnet**.
+- Seller pricing is **simulated**: each seller picks a price from its strategy and private minimum, and the price does not depend on order size. Savings in this demo come from sellers competing in the auction, not from volume discounts. The demo reports savings against each buyer's own maximum price, not against what that buyer would have paid buying alone.
 - Commit-reveal bidding is **not** confidential from the backend operator, which generates every bid.
 - The operator controls the agents and the verifier, so a dishonest operator could falsely verify a delivery. See [SECURITY.md](SECURITY.md) for exactly what the contract does and doesn't guarantee.
 

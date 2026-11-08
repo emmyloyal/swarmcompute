@@ -63,7 +63,14 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 export function LoadState({ error, loading, label }: { error?: string; loading: boolean; label: string }) {
-  if (error) return <div className="skeleton err">Couldn't load {label}: {error}. Is the API running (`pnpm --filter @swarmcompute/backend api:start`)?</div>;
+  if (error) {
+    return (
+      <div className="skeleton err">
+        Couldn't load {label}: {error}. This page needs the SwarmCompute API: run <code>pnpm --filter @swarmcompute/backend api:start</code> locally,
+        or, for a deployed site, build the frontend with <code>VITE_BACKEND_URL</code> set to where the API is hosted.
+      </div>
+    );
+  }
   if (loading) return <div className="skeleton">Loading {label}…</div>;
   return null;
 }

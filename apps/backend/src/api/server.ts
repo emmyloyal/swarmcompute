@@ -194,7 +194,13 @@ export function buildRoutes(pool: pg.Pool, meta: Record<string, string>): [RegEx
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    // Public, read-only, no credentials: any origin may read it (a separately hosted frontend).
+    "access-control-allow-origin": "*",
+  });
   res.end(json);
 }
 
@@ -207,6 +213,10 @@ async function main(): Promise<void> {
     rpcUrl: env.NEAR_RPC_URL,
   });
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET", "access-control-max-age": "86400" });
+      return res.end();
+    }
     if (req.method !== "GET") return send(res, 405, { error: "read-only API" });
     const url = new URL(req.url ?? "/", "http://localhost");
     for (const [re, h] of routes) {

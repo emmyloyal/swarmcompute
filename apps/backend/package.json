@@ -13,7 +13,8 @@
     "sync:run": "tsx src/scripts/sync-run.ts",
     "settle:run": "tsx src/scripts/settle-run.ts",
     "demo:run": "tsx src/scripts/demo-run.ts",
-    "api:start": "tsx src/api/server.ts"
+    "api:start": "tsx src/api/server.ts",
+    "snapshot:export": "tsx src/scripts/snapshot-export.ts"
   },
   "dependencies": {
     "@swarmcompute/shared": "workspace:*",

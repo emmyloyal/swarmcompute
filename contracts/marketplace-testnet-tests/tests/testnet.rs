@@ -54,6 +54,12 @@ fn commitment(auction: &str, seller: &str, price: u128, nonce: &[u8; 32]) -> Str
     hex(&h.finalize())
 }
 
+/// An RPC failure in the lookups near-workspaces does before broadcasting a transaction.
+fn is_pre_broadcast_rpc_error(e: &near_workspaces::error::Error) -> bool {
+    let s = format!("{e:?}");
+    s.contains("unable to fulfill the query request") || s.contains("TooManyRequests") || s.contains("429")
+}
+
 fn n(v: &Value) -> u128 {
     v.as_str().and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("not a u128 string: {v}"))
 }
@@ -83,13 +89,27 @@ impl Ctx {
     async fn call(&mut self, label: &str, who: &Account, method: &str, args: Value, deposit: u128, tgas: u64) -> Result<ExecutionFinalResult> {
         let is_agent = who.id().as_str().ends_with(&format!(".{}", self.contract.id()));
         let tgas = if is_agent { AGENT_TGAS } else { tgas };
-        let r = who
-            .call(self.contract.id(), method)
-            .args_json(args)
-            .deposit(NearToken::from_yoctonear(deposit))
-            .gas(Gas::from_tgas(tgas))
-            .transact()
-            .await?;
+        let mut attempt = 0;
+        let r = loop {
+            let res = who
+                .call(self.contract.id(), method)
+                .args_json(args.clone())
+                .deposit(NearToken::from_yoctonear(deposit))
+                .gas(Gas::from_tgas(tgas))
+                .transact()
+                .await;
+            match res {
+                Ok(r) => break r,
+                // The public RPC sometimes fails the nonce / block lookup done BEFORE the tx is
+                // broadcast. Nothing was sent, so retrying can't send it twice.
+                Err(e) if attempt < 4 && is_pre_broadcast_rpc_error(&e) => {
+                    attempt += 1;
+                    println!("  (RPC lookup failed before sending {method}; retry {attempt})");
+                    tokio::time::sleep(Duration::from_millis(2000 * attempt)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
         self.record(label, &r);
         Ok(r)
     }
@@ -114,8 +134,20 @@ impl Ctx {
         Ok(())
     }
 
+    /// Reads are safe to retry when the public RPC hiccups.
     async fn view(&self, method: &str, args: Value) -> Result<Value> {
-        Ok(self.contract.view(method).args_json(args).await?.json()?)
+        let mut attempt = 0;
+        loop {
+            match self.contract.view(method).args_json(args.clone()).await {
+                Ok(v) => return Ok(v.json()?),
+                Err(e) if attempt < 4 => {
+                    attempt += 1;
+                    println!("  (RPC view {method} failed: retry {attempt}: {})", e.to_string().chars().take(80).collect::<String>());
+                    tokio::time::sleep(Duration::from_millis(1500 * attempt)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
     }
 
     async fn purchase(&self, id: &str) -> Result<Value> {
@@ -133,8 +165,11 @@ impl Ctx {
     async fn wait_past(&self, deadline: &Value) -> Result<()> {
         let d: u64 = deadline.as_str().context("deadline")?.parse()?;
         loop {
-            if self.worker.view_block().await?.timestamp() > d {
-                return Ok(());
+            // A failed block read just means "check again".
+            if let Ok(b) = self.worker.view_block().await {
+                if b.timestamp() > d {
+                    return Ok(());
+                }
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;
         }

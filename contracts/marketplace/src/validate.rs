@@ -1,11 +1,16 @@
 //! Input validators. Mirrors packages/shared/src/ids.ts (no regex crate in wasm).
 
-pub fn is_buyer_id(s: &str) -> bool {
-    matches!(s.strip_prefix("buyer-"), Some(d) if d.len() == 3 && d.bytes().all(|b| b.is_ascii_digit()))
-}
-
-pub fn is_seller_id(s: &str) -> bool {
-    matches!(s.strip_prefix("seller-"), Some(d) if d.len() == 2 && d.bytes().all(|b| b.is_ascii_digit()))
+/// An agent's name, the first label of `<name>.<marketplace contract>`:
+/// 2..=32 chars of `a-z0-9`, with single `-` or `_` only between them
+/// (a subset of NEAR's account-id label rules).
+pub fn is_agent_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    let sep = |c: u8| c == b'-' || c == b'_';
+    (2..=32).contains(&b.len())
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || sep(*c))
+        && !sep(b[0])
+        && !sep(b[b.len() - 1])
+        && !b.windows(2).any(|w| sep(w[0]) && sep(w[1]))
 }
 
 /// `^[a-z][a-z0-9-]{2,63}$`
@@ -50,11 +55,16 @@ mod tests {
 
     #[test]
     fn ids() {
-        assert!(is_buyer_id("buyer-001"));
-        assert!(!is_buyer_id("buyer-01"));
-        assert!(!is_buyer_id("buyer-0a1"));
-        assert!(is_seller_id("seller-05"));
-        assert!(!is_seller_id("seller-005"));
+        assert!(is_agent_name("alice"));
+        assert!(is_agent_name("buyer-1"));
+        assert!(is_agent_name("gpu_farm-02"));
+        assert!(!is_agent_name("a"));
+        assert!(!is_agent_name(&"a".repeat(33)));
+        assert!(!is_agent_name("Alice"));
+        assert!(!is_agent_name("-alice"));
+        assert!(!is_agent_name("alice-"));
+        assert!(!is_agent_name("al--ice"));
+        assert!(!is_agent_name("al.ice"));
         assert!(is_entity_id("auction-0001"));
         assert!(!is_entity_id("Auction-1"));
         assert!(!is_entity_id("ab"));

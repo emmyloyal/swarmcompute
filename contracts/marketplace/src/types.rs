@@ -46,20 +46,42 @@ impl PurchaseState {
     }
 }
 
+/// What a buyer agent's owner wants to buy. Stored on chain (RULES.md R22):
+/// the operator can group this agent into a coalition, but only on these terms.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuyerRequest {
+    pub gpu_model: GpuModel,
+    /// Minimum VRAM per GPU.
+    pub vram_gb: u32,
+    pub hours: u32,
+    /// The most this agent will pay per GPU-hour; it prepays hours × this.
+    pub max_price_per_hour: U128,
+    /// Nanoseconds since epoch. The agent isn't grouped after this.
+    pub deadline: U64,
+}
+
+/// A buyer agent: its own sub-account of the marketplace, opened by `owner` (RULES.md R19–R21).
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Buyer {
+    /// The agent's account id, `<name>.<marketplace contract>`.
     pub buyer_id: String,
-    pub max_budget: U128,
-    /// The buyer agent's own testnet wallet: it prepays from here and every
-    /// balance (excess over the clearing price, refunds) is sent back here.
-    pub wallet: AccountId,
+    /// The wallet that opened the agent. Every refund and withdrawal goes here (R11).
+    pub owner: AccountId,
+    /// False until the agent's account and key exist on chain.
+    pub opened: bool,
+    pub created_at: U64,
+    /// The open request, if any. Cleared when a purchase for it completes.
+    pub request: Option<BuyerRequest>,
+    /// The coalition this agent is in, while that coalition is live.
+    pub coalition_id: Option<String>,
+    /// Deposited and credited money, free to reserve or withdraw.
+    pub available: U128,
     /// Prepaid/owed in purchases that are still live.
     pub reserved: U128,
     /// Paid to sellers in completed purchases.
     pub spent: U128,
-    /// Credited to this buyer and not yet withdrawn to its wallet.
-    pub balance: U128,
     /// Amount of the withdrawal currently in flight (0 when none).
     pub withdrawing: U128,
 }
@@ -89,13 +111,34 @@ impl Reputation {
     }
 }
 
+/// How the agent host prices this seller's bids (RULES.md R24). The contract
+/// enforces only the floor: no revealed price below `min_price_per_hour`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SellerStrategy {
+    /// Bid the minimum price.
+    AtMinimum,
+    /// Bid `discount_bps` below the coalition's price ceiling, but never below the minimum.
+    BelowCeiling { discount_bps: u16 },
+}
+
+/// A seller agent: its own sub-account of the marketplace, opened by `owner` (RULES.md R19, R20, R23).
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seller {
+    /// The agent's account id, `<name>.<marketplace contract>`.
     pub seller_id: String,
-    /// REAL testnet account. Immutable after registration (RULES.md R11).
-    pub payout_account_id: AccountId,
+    /// The wallet that opened the agent. Payouts go here (R11). Fixed at opening.
+    pub owner: AccountId,
+    /// False until the agent's account and key exist on chain.
+    pub opened: bool,
+    pub created_at: U64,
+    /// Whether the agent is taking new auctions.
+    pub active: bool,
     pub offers: Vec<GpuOffer>,
+    pub min_price_per_hour: U128,
+    pub strategy: SellerStrategy,
     pub reputation: Reputation,
 }
 
@@ -116,7 +159,9 @@ pub struct Coalition {
     pub vram_gb: u32,
     pub min_members: u32,
     pub members: Vec<CoalitionMember>,
-    pub failed: bool,
+    /// True once the coalition's purchase ended or it fell below `min_members`.
+    /// Its members are then free to join another coalition.
+    pub closed: bool,
     pub live_purchase_id: Option<String>,
 }
 
@@ -159,7 +204,7 @@ pub struct Bid {
 
 /// One member's money in one purchase. Fairness is visible field by field:
 /// `owed = hours × clearing_price` for every member (same rate),
-/// `excess = prepaid − owed` is returned to the member's own wallet.
+/// `excess = prepaid − owed` goes back to the member's available balance.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Allocation {
@@ -169,7 +214,7 @@ pub struct Allocation {
     pub prepaid: U128,
     /// Set at award: hours × clearing price.
     pub owed: U128,
-    /// Set at award: prepaid − owed, credited to the buyer's balance.
+    /// Set at award: prepaid − owed, credited to the buyer's available balance.
     pub excess: U128,
     /// Credited back after a failure (owed, or prepaid if never awarded).
     pub refunded: U128,
@@ -215,8 +260,13 @@ pub struct Config {
     pub paused: bool,
     pub total_escrowed: U128,
     pub total_balances: U128,
+    pub buyer_count: u32,
     pub seller_count: u32,
     pub purchase_count: u32,
+    /// What `open_buyer_agent` / `open_seller_agent` costs on top of a buyer's budget.
+    pub open_fee: U128,
+    /// The part of `open_fee` sent to the new agent account for its own gas.
+    pub agent_gas_fund: U128,
 }
 
 #[near(serializers = [json])]

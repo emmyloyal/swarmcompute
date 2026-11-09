@@ -1,8 +1,10 @@
 # SwarmCompute
 
-An autonomous GPU marketplace where AI buyer agents team up into one order, sellers compete for it in a sealed-bid auction, and every buyer in the group pays the same fair price, held in on-chain escrow until delivery is verified.
+A GPU marketplace on NEAR Testnet where anyone can open a **buying agent** or a **selling agent**. Buying agents with the same GPU needs team up into one order. Selling agents compete for it in a sealed-bid auction. Every buyer in the group pays the same fair price, held in on-chain escrow until delivery is verified.
 
-> This is a demo running on NEAR Testnet. Agents, GPU delivery and verification are simulated. See [What is real and what is simulated](#what-is-real-and-what-is-simulated) before drawing conclusions.
+Every agent is its own NEAR account with its own key, opened from its owner's wallet. There are no simulated buyers or sellers. If no seller can serve a request, nothing happens until one can.
+
+> This runs on NEAR Testnet. GPU delivery and its verification are simulated; everything else is real. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
 
 ## The problem
 
@@ -18,51 +20,63 @@ AI agents increasingly need to buy compute on their own, without a human negotia
 
 ## How SwarmCompute addresses it
 
-**Buyer coalitions make small buyers worth competing for.** Buyer agents with compatible needs (same GPU, enough VRAM, compatible deadlines) group into one larger order that sellers bid on. Each coalition is kept small enough that at least two sellers can fill it, so the auction always has competition. A buyer whose maximum price is below the going market rate is left out rather than added, because one low maximum would lower the whole group's ceiling and could leave no eligible bid.
+**Real agents, each its own on-chain account.** Opening an agent creates the account `<name>.<marketplace contract>`. It gets exactly one key: a function-call key that can only call the marketplace's agent actions (prepay, bid, reveal, withdraw). That key can't transfer NEAR or touch anything else. The wallet that opened the agent is its owner, and every refund, leftover and seller payout can only go back to that wallet.
 
-**Sealed-bid reverse auctions set the price.** Each seller first commits to a hidden bid, then reveals it, so no seller can see the others' bids and undercut them at the last second. The lowest eligible bid wins.
+**Buyer coalitions make small buyers worth competing for.** Buying agents that want the same GPU model are grouped into one larger order. The coalition takes the strictest member's VRAM requirement. Each member's hours and maximum price come from its own request stored on chain, so the coordinator can group agents but can't change anyone's terms. A round only starts if at least one seller's own terms would let it bid.
 
-**One fair price for every member.** The winning bid becomes the coalition's *clearing price*. Every member pays `its hours × the clearing price`, the same rate as everyone else and never more than its own maximum. Before bidding, each buyer prepays its own maximum from its own wallet. Whatever it paid above the clearing price is credited back to it when the auction closes and then sent to its wallet.
+**Sealed-bid reverse auctions set the price.** Each selling agent commits to a hidden bid with its own key, then reveals it. No seller can see the others' bids and undercut them at the last second. The contract rejects any reveal below that seller's own minimum price. The lowest eligible bid wins.
 
-**On-chain escrow holds the money until delivery is verified.** The seller is paid only after delivery is verified. If delivery fails, or a deadline passes, each buyer gets its money back in its own wallet. The contract also guarantees money can only go to the awarded seller or back to the buyer who paid it, and never twice.
+**One fair price for every member.** The winning bid becomes the coalition's *clearing price*. Every member pays `its hours × the clearing price`: the same rate for everyone, never more than its own maximum. Each member first reserves `hours × its own maximum` from its budget; whatever it reserved above the clearing price goes straight back to its balance.
 
-**On-chain reputation keeps a track record.** Each auction win, completed delivery, failed delivery and unrevealed bid updates the seller's reputation on-chain. Anyone can check it, and the contract uses it to break ties between equal bids. It doesn't otherwise affect which bid wins.
+**On-chain escrow holds the money until delivery is verified.** The winning seller's owner is paid only after delivery is verified. If delivery fails or a deadline passes, every member gets its money back. Anyone can trigger an expiry, so money can't get stuck.
 
-## How a purchase flows
+**On-chain reputation keeps a track record.** Wins, completed and failed deliveries, and unrevealed bids are recorded by the contract. Reputation breaks ties between equal bids.
 
-1. Buyer agents post their needs, and a coalition forms (deterministically, from a seed).
-2. Each member prepays **hours × its own maximum price** into escrow, from its own wallet.
-3. Seller agents commit sealed bids, then reveal them; the contract checks every reveal against its commitment.
-4. The lowest eligible bid wins. Every member owes **hours × that clearing price**. The rest of its prepayment is credited back when the auction closes, then sent to its wallet.
-5. GPU delivery happens and is verified (both simulated in this demo).
-6. On success, escrow pays the seller. On failure (including partial delivery), each member gets its payment back. Reputation is updated by the contract.
+## Using it
 
-Example from a real testnet run: seven buyers whose own maximums ranged from 0.000867 to 0.001868 NEAR per GPU-hour all paid 0.000658 NEAR per hour, the lowest of two sealed bids. The buyer with the highest maximum prepaid 0.0168 NEAR, paid 0.0059 and got 0.0109 back.
+1. **Connect a NEAR Testnet wallet**: Meteor or MyNearWallet.
+2. **Open an agent** and set its terms:
+   - **Buying agent:** GPU model, minimum VRAM, GPU-hours, maximum price per hour, deadline, and a budget to deposit.
+   - **Selling agent:** up to four GPU offers (model, VRAM, capacity in hours), a minimum price, and a strategy: bid my minimum, or bid a percentage below the coalition's price ceiling (never below my minimum).
+3. **Your agent acts on its own.** The market host groups buyers, buying agents prepay, selling agents commit and reveal their bids, and the round settles. You watch it live: rounds, sealed and revealed bids, the clearing price, and why a request is still waiting.
+4. **Manage it from your wallet.** Deposit more, withdraw to your wallet, change or close a request, leave a round before it's funded. As a seller: change prices, strategy or capacity, or pause bidding.
+
+**Cost to open an agent: 0.0001 NEAR**, plus a buyer's budget, which can be withdrawn whenever it isn't reserved in a round. The contract sponsors the rest: a 0.1 NEAR gas fund sent to the new agent's account, plus its storage. Sponsorship comes only from the contract's own free balance (topped up by sending NEAR to the contract), never from escrow or buyers' money. Each wallet can open up to 5 agents.
+
+## How a round flows
+
+1. Buying agents with open requests for the same GPU are grouped into a coalition, if some seller's terms let it bid.
+2. Each buying agent reserves `hours × its own maximum` from its budget, signed with its own key.
+3. Selling agents that can serve the order commit sealed bids, then reveal them, each signed with its own key. The contract checks every reveal against its commitment and the seller's minimum.
+4. The lowest eligible bid wins. Every member owes `hours × that clearing price`, and the rest of its reservation returns to its balance.
+5. GPU delivery happens and is verified (both simulated).
+6. On success, escrow pays the winning seller's owner. On failure, every member gets its money back and its request stays open for another round.
+
+Example from a testnet run: two buying agents (10 hours at most 0.003 NEAR/h, and 20 hours at most 0.002 NEAR/h) formed one A100 coalition. Two selling agents bid 0.0018 and 0.001 NEAR/h. Both buyers paid the clearing price of 0.001 NEAR/h, the winning seller's owner received exactly 30 h × 0.001 = 0.03 NEAR, and the buyers kept the difference from their own maximums.
 
 ## What is real and what is simulated
 
-SwarmCompute is a demonstration, and it is **not** a trustless system. To be specific:
+**Real, on NEAR Testnet:** the users and their wallets, every agent account and its key, deposits and budgets, coalitions, sealed bids and reveals, escrow, the clearing-price settlement, payouts, refunds, withdrawals and reputation.
 
-- The 20 buyer agents are **simulated**, but each has a **real testnet wallet** that prepays and receives its returned balance. The backend holds those wallets' keys.
-- One designated demo wallet tops up the buyer wallets when the demo is set up.
-- Seller agents are **simulated**; their payout accounts are **real** testnet accounts.
-- GPU provisioning, delivery and delivery verification are **simulated**.
-- Prepayments, escrow, the clearing-price settlement, payouts, refunds, returned balances and reputation execute on **NEAR Testnet**.
-- Seller pricing is **simulated**: each seller picks a price from its strategy and private minimum, and the price does not depend on order size. Savings in this demo come from sellers competing in the auction, not from volume discounts. The demo reports savings against each buyer's own maximum price, not against what that buyer would have paid buying alone.
-- Commit-reveal bidding is **not** confidential from the backend operator, which generates every bid.
-- The operator controls the agents and the verifier, so a dishonest operator could falsely verify a delivery. See [SECURITY.md](SECURITY.md) for exactly what the contract does and doesn't guarantee.
+**Simulated:** GPU provisioning, delivery and its verification. No real compute runs; the UI labels those steps "Simulated".
+
+**Trust assumptions, stated plainly.** SwarmCompute is not trustless:
+
+- The **market host** holds each agent's key (encrypted at rest) so agents can act while their owners are offline. It can therefore see a seller's sealed bid before the reveal. Commit-reveal hides bids from other sellers, not from the host operator.
+- The **operator** forms coalitions and runs the simulated delivery steps; the **verifier** confirms delivery. A dishonest verifier could falsely verify a delivery.
+- What the contract guarantees regardless: money only ever goes to the winning seller's owner or back to the buyer's owner, never twice; no member pays above its own maximum; agent keys can't move money elsewhere; and anyone can expire a stalled round to get the money back.
 
 ## Repository
 
 | Path | What |
 |---|---|
-| [contracts/marketplace](contracts/marketplace/) | Rust escrow and auction contract (`near-sdk` 5.30.1) |
-| [contracts/marketplace-testnet-tests](contracts/marketplace-testnet-tests/) | Real-chain tests on NEAR Testnet |
-| [packages/shared](packages/shared/) | Money arithmetic, IDs, bid commitments, signed agent messages |
-| [apps/backend](apps/backend/) | Agents, coalition engine, auction and settlement engines, chain sync, read-only API |
-| [apps/frontend](apps/frontend/) | Web UI (React + Vite) |
+| [contracts/marketplace](contracts/marketplace/) | Rust contract (`near-sdk` 5.30.1): agent accounts, coalitions, sealed-bid auction, escrow, sponsorship |
+| [contracts/marketplace-testnet-tests](contracts/marketplace-testnet-tests/) | Real-chain tests on NEAR Testnet: agent accounts and key permissions, own-key signing, full rounds |
+| [apps/backend](apps/backend/) | Market host: agent keystore, coordinator loop, event indexer, HTTP API |
+| [apps/frontend](apps/frontend/) | Web app (React + Vite): open and manage agents, live market |
+| [packages/shared](packages/shared/) | Money arithmetic, IDs, bid commitments |
 
-Docs: [ARCHITECTURE.md](ARCHITECTURE.md) · [RULES.md](RULES.md) · [SECURITY.md](SECURITY.md) · [API.md](API.md) · [DEPLOYMENT.md](DEPLOYMENT.md) · [DEMO.md](DEMO.md)
+The engineering rules every change follows are in [RULES.md](RULES.md).
 
 ## Getting started
 
@@ -77,20 +91,20 @@ Docs: [ARCHITECTURE.md](ARCHITECTURE.md) · [RULES.md](RULES.md) · [SECURITY.md
 
 ```sh
 pnpm install
-cp .env.example .env      # then fill in the secrets; never commit .env
-pnpm db:migrate
-pnpm test                                   # 117 TypeScript tests
-cd contracts/marketplace && cargo test      # 23 contract unit tests
+cp .env.example .env                        # DATABASE_URL at least; never commit .env
+pnpm test                                   # backend + shared TypeScript tests
+cd contracts/marketplace && cargo test      # contract unit tests
 ```
 
-### Run the demo on testnet
+### Run it on testnet
 
 ```sh
 cd contracts/marketplace && cargo near build non-reproducible-wasm --no-abi && cd ../..
-pnpm --filter @swarmcompute/backend testnet:setup   # dev account, contract, seller + buyer wallets → .env
-pnpm --filter @swarmcompute/backend demo:run        # the full flow, one forced delivery failure
-pnpm --filter @swarmcompute/backend api:start       # read-only API on :4000
-pnpm --filter @swarmcompute/frontend dev            # UI on http://localhost:5173
+pnpm --filter @swarmcompute/backend testnet:setup   # deploys the contract, writes roles and keys to .env
+pnpm --filter @swarmcompute/backend start           # market host + API on :4000 (applies migrations)
+pnpm --filter @swarmcompute/frontend dev            # web app on http://localhost:5173
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md) has the details, and [DEMO.md](DEMO.md) has a walkthrough for presenting it.
+Then open http://localhost:5173, connect a testnet wallet, and open an agent. To watch a full round without a browser wallet, `pnpm --filter @swarmcompute/backend testnet:smoke` creates four testnet wallets that open two buying and two selling agents, then waits for the round to complete.
+
+A deployed frontend points at a hosted market host with `VITE_BACKEND_URL`.

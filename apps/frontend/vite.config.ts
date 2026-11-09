@@ -1,8 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// The UI talks only to the read-only public API (proxied in dev) and to the
-// public NEAR Testnet RPC for contract views. No keys, no VITE_ secrets (RULES.md R6).
+// The UI talks to the market host API (proxied in dev), the public NEAR Testnet
+// RPC, and the user's own wallet, which signs. No keys, no VITE_ secrets (RULES.md R6).
 export default defineConfig({
   plugins: [react()],
   server: {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "SwarmCompute web UI (read-only). Reads the public API and contract views; holds no keys.",
+  "description": "SwarmCompute web UI: open and manage your own buyer and seller agents; your wallet signs; agents' keys stay in the market host.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",

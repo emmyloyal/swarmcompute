@@ -1,67 +1,48 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import type { Market, Windows } from "./types";
 
 export interface Meta {
   network: "testnet";
   contractId: string;
   explorerTxUrl: string;
   rpcUrl: string;
+  windows: Windows;
+  openFee: string | null;
+  agentGasFund: string | null;
+  agentNameMaxLength: number;
+  host: { tick: number; updatedAt: string; chainTimeNs: string; lastError: string | null };
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status = 0,
+  ) {
+    super(message);
+  }
+}
 
 /**
- * Where data comes from:
- * - "api": the read-only backend. In dev, `/api` is proxied by Vite; a deployed
- *   frontend points at it with VITE_BACKEND_URL (public, non-secret).
- * - "snapshot": static JSON in /snapshot, written by `pnpm --filter @swarmcompute/backend snapshot:export`.
- *   Used by a production build with no VITE_BACKEND_URL, or forced with VITE_DATA_SOURCE=snapshot.
+ * The market host API. In dev, `/api` is proxied by Vite; a deployed frontend
+ * points at the hosted backend with VITE_BACKEND_URL (public, non-secret).
  */
 const env = import.meta.env;
-const API_BASE = ((env.PROD ? env.VITE_BACKEND_URL : "") ?? "").replace(/\/$/, "");
-export const DATA_SOURCE: "api" | "snapshot" =
-  env.VITE_DATA_SOURCE === "snapshot" || (env.PROD && !API_BASE && env.VITE_DATA_SOURCE !== "api") ? "snapshot" : "api";
+export const API_BASE = ((env.PROD ? env.VITE_BACKEND_URL : "") ?? "").replace(/\/$/, "");
 
-async function fetchJson<T>(url: string, label: string): Promise<T> {
-  const r = await fetch(url, { headers: { accept: "application/json" } });
-  if (!r.ok) throw new ApiError(`${r.status} ${r.statusText} for ${label}`);
-  // A host with SPA rewrites answers a missing file with index.html and 200.
-  if (!(r.headers.get("content-type") ?? "").includes("json")) throw new ApiError(`404 not in snapshot: ${label}`);
-  return (await r.json()) as T;
-}
-
-const SNAPSHOT_FILES: Record<string, string> = {
-  "/api/meta": "meta.json",
-  "/api/overview": "overview.json",
-  "/api/buyers": "buyers.json",
-  "/api/sellers": "sellers.json",
-  "/api/coalitions": "coalitions.json",
-  "/api/auctions": "auctions.json",
-  "/api/purchases": "purchases.json",
-  "/api/messages": "messages.json",
-  "/api/messages/types": "message-types.json",
-};
-
-/** Serve an API path from the static snapshot, applying the same query filters the API would. */
-async function getSnapshot<T>(path: string): Promise<T> {
-  const url = new URL(path, "http://x");
-  const detail = /^\/api\/purchases\/([^/]+)$/.exec(url.pathname);
-  const file = detail ? `purchases/${encodeURIComponent(decodeURIComponent(detail[1]!))}.json` : SNAPSHOT_FILES[url.pathname];
-  if (!file) throw new ApiError(`404 not in snapshot: ${path}`);
-  const data = await fetchJson<unknown>(`/snapshot/${file}`, path);
-  if (url.pathname === "/api/messages") {
-    const q = url.searchParams;
-    const limit = Math.min(Number(q.get("limit") ?? 100) || 100, 500);
-    const type = q.get("type");
-    const status = q.get("status");
-    return (data as { type: string; status: string }[])
-      .filter((m) => (!type || m.type === type) && (!status || m.status === status))
-      .slice(0, limit) as T;
-  }
-  return data as T;
+async function parse<T>(r: Response, label: string): Promise<T> {
+  const ct = r.headers.get("content-type") ?? "";
+  const body = ct.includes("json") ? ((await r.json()) as unknown) : null;
+  if (!r.ok) throw new ApiError((body as { error?: string } | null)?.error ?? `${r.status} ${r.statusText} for ${label}`, r.status);
+  if (body === null) throw new ApiError(`no JSON from ${label}: is the market host running?`);
+  return body as T;
 }
 
 export async function getJson<T>(path: string): Promise<T> {
-  return DATA_SOURCE === "snapshot" ? getSnapshot<T>(path) : fetchJson<T>(`${API_BASE}${path}`, path);
+  return parse<T>(await fetch(`${API_BASE}${path}`, { headers: { accept: "application/json" } }), path);
+}
+
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return parse<T>(await fetch(`${API_BASE}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), path);
 }
 
 export interface Loaded<T> {
@@ -87,8 +68,7 @@ export function useApi<T>(path: string | null, pollMs = 0): Loaded<T> {
       } catch (e) {
         if (alive.current) set((s) => ({ ...s, error: (e as Error).message, loading: false }));
       }
-      // A snapshot never changes, so there is nothing to poll.
-      if (pollMs && DATA_SOURCE === "api" && alive.current) timer = window.setTimeout(run, pollMs);
+      if (pollMs && alive.current) timer = window.setTimeout(run, pollMs);
     };
     set((s) => ({ ...s, loading: true }));
     void run();
@@ -99,6 +79,10 @@ export function useApi<T>(path: string | null, pollMs = 0): Loaded<T> {
   }, [path, pollMs]);
   return state;
 }
+
+/** One shared poll of the market snapshot for every page. */
+export const MarketContext = createContext<Loaded<Market>>({ data: undefined, error: undefined, loading: true, at: undefined });
+export const useMarket = () => useContext(MarketContext);
 
 export const MetaContext = createContext<Meta | undefined>(undefined);
 export const useMeta = () => useContext(MetaContext);

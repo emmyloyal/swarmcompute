@@ -19,3 +19,6 @@ export const Wallet = (p: P) => (<svg {...base} {...p}><path d="M4 7.5A2.5 2.5 0
 export const Check = (p: P) => (<svg {...base} {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>);
 export const Flask = (p: P) => (<svg {...base} {...p}><path d="M9.5 3.5h5" /><path d="M10.5 3.5v5.5L5 18.5A1.5 1.5 0 0 0 6.3 20.5h11.4a1.5 1.5 0 0 0 1.3-2L13.5 9V3.5" /><path d="M7.5 15h9" /></svg>);
 export const Refresh = (p: P) => (<svg {...base} {...p}><path d="M20 11a8 8 0 0 0-14.3-4.5L4 8.5" /><path d="M4 4v4.5h4.5" /><path d="M4 13a8 8 0 0 0 14.3 4.5l1.7-2" /><path d="M20 20v-4.5h-4.5" /></svg>);
+export const Plus = (p: P) => (<svg {...base} {...p}><path d="M12 5v14M5 12h14" /></svg>);
+export const User = (p: P) => (<svg {...base} {...p}><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" /></svg>);
+export const Store = (p: P) => (<svg {...base} {...p}><path d="M4 9.5 5.5 4h13L20 9.5" /><path d="M4 9.5h16v1a2.7 2.7 0 0 1-5.3 0 2.7 2.7 0 0 1-5.4 0 2.7 2.7 0 0 1-5.3 0Z" /><path d="M5.5 13v7h13v-7" /></svg>);

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
-import { accountUrl, txUrl, useMeta } from "../lib/api";
-import { short } from "../lib/format";
+import { Link } from "react-router-dom";
+import { accountUrl, txUrl, useMeta, useNow } from "../lib/api";
+import { agentName, dur, nsToMs, short } from "../lib/format";
+import type { Purchase } from "../lib/types";
 import { External, Flask, Lock } from "./icons";
 
 /** Real, verifiable on NEAR Testnet. Always carries an explorer link when a tx exists. */
@@ -16,9 +18,54 @@ export function OnChain({ tx, label = "On-chain" }: { tx?: string | null; label?
   );
 }
 
-/** Backend-controlled simulation (spec Section 2). */
+/** Simulated by the host: GPU delivery and its verification only (RULES.md R12). */
 export function Simulated({ label = "Simulated" }: { label?: string }) {
-  return <span className="pill sim" title="Simulated by the backend. Not a real-world action."><Flask />{label}</span>;
+  return <span className="pill sim" title="GPU delivery and its verification are simulated: no real compute runs."><Flask />{label}</span>;
+}
+
+/** An agent, linked to its page, shown by its short name. */
+export function AgentLink({ id, you }: { id: string | null | undefined; you?: boolean }) {
+  if (!id) return <span className="faint">–</span>;
+  return (
+    <Link to={`/agents/${id}`} className="agent-link" title={id}>
+      {agentName(id)}
+      {you && <span className="you">you</span>}
+    </Link>
+  );
+}
+
+/** Live countdown to a chain-time deadline (ns). */
+export function Countdown({ ns, done = "now" }: { ns: string | null | undefined; done?: string }) {
+  const now = useNow();
+  const ms = nsToMs(ns);
+  if (ms === null) return <span className="faint">–</span>;
+  const s = Math.round((ms - now) / 1000);
+  return <span className="nowrap">{s > 0 ? `in ${dur(s)}` : done}</span>;
+}
+
+/** What a round is doing right now, in plain words, and when the current phase ends. */
+export function phaseOf(p: Purchase): { text: string; until: string | null } {
+  switch (p.state) {
+    case "CREATED":
+      return { text: "Members are prepaying their own max", until: p.prepay_deadline };
+    case "BIDDING": {
+      const t = Date.now();
+      const commit = nsToMs(p.commit_deadline)!;
+      return t < commit
+        ? { text: `Sellers are committing sealed bids (${p.bids.length} so far)`, until: p.commit_deadline }
+        : { text: `Sellers are revealing (${p.bids.filter((b) => b.revealed_price_per_hour).length}/${p.bids.length})`, until: p.reveal_deadline };
+    }
+    case "FUNDED":
+      return { text: "Awarded. Delivery starting (simulated)", until: p.delivery_deadline };
+    case "DELIVERING":
+      return { text: "GPU delivery in progress (simulated)", until: p.delivery_deadline };
+    case "VERIFYING":
+      return { text: "Verifying delivery (simulated)", until: p.verification_deadline };
+    case "COMPLETED":
+      return { text: "Completed. The winning seller's owner was paid", until: null };
+    default:
+      return { text: "Ended without a sale. Every member's money is back in its available balance", until: null };
+  }
 }
 
 export function TxLink({ hash, head = 6 }: { hash: string | null | undefined; head?: number }) {
@@ -44,8 +91,8 @@ const TONE: Record<string, string> = {
   COMPLETED: "ok", REFUNDED: "warn", FAILED: "bad", EXPIRED: "bad",
   FUNDED: "blue", DELIVERING: "blue", VERIFYING: "blue", AWARDED: "blue", BIDDING: "blue",
   ACTIVE: "blue", CLOSED: "ok", PROPOSED: "", AUCTIONING: "blue",
-  CONFIRMED: "ok", ACCEPTED: "", REJECTED: "bad", SUCCEEDED: "ok", SUCCESS: "ok", FAILURE: "bad",
-  OPEN: "", IN_COALITION: "blue", FULFILLED: "ok", UNSERVED: "warn", LEFT: "warn",
+  SUCCESS: "ok", FAILURE: "bad", INFO: "", WARN: "warn", ERROR: "bad",
+  WAITING: "warn", IN_ROUND: "blue", OPENING: "warn", INACTIVE: "", LIVE: "ok", NO_REQUEST: "",
 };
 
 export function StatePill({ state }: { state: string | null | undefined }) {
@@ -66,8 +113,8 @@ export function LoadState({ error, loading, label }: { error?: string; loading: 
   if (error) {
     return (
       <div className="skeleton err">
-        Couldn't load {label}: {error}. This page needs the SwarmCompute API: run <code>pnpm --filter @swarmcompute/backend api:start</code> locally,
-        or, for a deployed site, build the frontend with <code>VITE_BACKEND_URL</code> set to where the API is hosted.
+        Couldn't load {label}: {error}. This page needs the SwarmCompute market host: run <code>pnpm --filter @swarmcompute/backend start</code> locally,
+        or, for a deployed site, build the frontend with <code>VITE_BACKEND_URL</code> set to where the host runs.
       </div>
     );
   }

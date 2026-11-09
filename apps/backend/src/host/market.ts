@@ -17,7 +17,7 @@
  * the request just waits (R25).
  */
 import { createHash, randomBytes } from "node:crypto";
-import { computeCommitment, type GpuModel } from "@swarmcompute/shared";
+import { computeCommitment, yoctoToNear, type GpuModel } from "@swarmcompute/shared";
 import {
   TERMINAL_STATES,
   type ContractBuyer,
@@ -96,6 +96,8 @@ const NS = 1_000_000_000n;
 const COMMIT_MARGIN_NS = 5n * NS;
 const nsToDate = (ns: bigint | string) => new Date(Number(BigInt(ns) / 1_000_000n));
 const short = (id: string) => id.split(".")[0];
+/** Activity messages show exact NEAR, not raw yocto (RULES.md R3: exact, no rounding). */
+const N = (yocto: bigint | string) => `${yoctoToNear(BigInt(yocto))} NEAR`;
 
 export class MarketHost {
   private scanned = 0;
@@ -239,7 +241,7 @@ export class MarketHost {
     }
     const outcome =
       p.state === "COMPLETED"
-        ? `completed: ${short(p.winner_seller_id!)} paid at ${p.clearing_price_per_hour} yocto/h`
+        ? `completed: ${short(p.winner_seller_id!)} paid at ${N(p.clearing_price_per_hour!)}/h`
         : `${p.state.toLowerCase()}: every member's money is back in its available balance`;
     await this.note({ level: "INFO", kind: "purchase_finished", message: outcome, purchaseId: p.purchase_id });
   }
@@ -264,7 +266,7 @@ export class MarketHost {
             const b = buyers.get(m.buyer_id);
             const amount = BigInt(m.max_price_per_hour) * BigInt(m.hours);
             if (b && BigInt(b.available) >= amount) {
-              await this.tx("prepay", `${short(m.buyer_id)} reserves ${amount} yocto (hours × own max)`, { purchaseId: pid, agentId: m.buyer_id }, () => this.c.prepay(key, pid, m.buyer_id));
+              await this.tx("prepay", `${short(m.buyer_id)} reserves ${N(amount)} (hours × own max)`, { purchaseId: pid, agentId: m.buyer_id }, () => this.c.prepay(key, pid, m.buyer_id));
             }
           }),
         );
@@ -367,7 +369,7 @@ export class MarketHost {
           const stored = await this.o.bids.get(p.purchase_id, b.seller_id);
           if (!key || !stored) return;
           const { pricePerHourYocto, nonce } = this.o.vault.open(stored.auctionId, b.seller_id, stored.sealed);
-          const r = await this.tx("reveal_bid", `${short(b.seller_id)} reveals ${pricePerHourYocto} yocto/h`, { purchaseId: p.purchase_id, agentId: b.seller_id }, () =>
+          const r = await this.tx("reveal_bid", `${short(b.seller_id)} reveals ${N(pricePerHourYocto)}/h`, { purchaseId: p.purchase_id, agentId: b.seller_id }, () =>
             this.c.revealBid(key, p.purchase_id, b.seller_id, pricePerHourYocto, nonce.toString("hex")),
           );
           nonce.fill(0);
@@ -463,7 +465,7 @@ export class MarketHost {
       const ids = pc.members.map((m) => m.buyerId);
       const reg = await this.tx(
         "register_coalition",
-        `${ids.length} buyer agent(s) grouped: ${pc.gpuModel} ≥${pc.vramGb} GB, ${pc.totalHours} h, ceiling ${pc.priceCeilingPerHourYocto} yocto/h`,
+        `${ids.length} buyer agent(s) grouped: ${pc.gpuModel} ≥${pc.vramGb} GB, ${pc.totalHours} h, ceiling ${N(pc.priceCeilingPerHourYocto)}/h`,
         {},
         () => this.c.registerCoalition(pc.coalitionId, ids, pc.minMembers),
       );

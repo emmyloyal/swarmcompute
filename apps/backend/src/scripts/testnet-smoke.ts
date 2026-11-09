@@ -11,7 +11,10 @@
  *      winning seller's owner is paid;
  *   4. a buyer's owner withdraws the leftover budget to their own wallet.
  *
- *   pnpm --filter @swarmcompute/backend testnet:smoke [--api http://localhost:4000]
+ *   pnpm --filter @swarmcompute/backend testnet:smoke [--api http://localhost:4000] [--fund-from-operator]
+ *
+ * `--fund-from-operator` creates the user wallets under the operator account
+ * (0.3 NEAR each) instead of asking the testnet helper, which rate-limits.
  */
 import { config as loadEnv } from "dotenv";
 import { dirname, resolve } from "node:path";
@@ -55,20 +58,30 @@ async function main(): Promise<void> {
   const openFee = BigInt(meta.openFee);
   console.log(`host at ${API} (tick ${meta.host.tick}), contract ${CONTRACT}, open fee ${openFee} yocto`);
 
-  // 1. A funding account from the testnet helper, and four user wallets under it.
-  const fk = KeyPair.fromRandom("ed25519");
-  const funderId = `users-${Date.now()}.testnet`;
-  const res = await fetch(HELPER, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ newAccountId: funderId, newAccountPublicKey: fk.getPublicKey().toString() }) });
-  if (!res.ok) throw new Error(`testnet helper refused ${funderId}: HTTP ${res.status}`);
-  await waitFor("funder account", async () => provider.viewAccount({ accountId: funderId }).then(() => true).catch(() => null), 60_000, 2000);
-  const funder = new Account(funderId, provider, new KeyPairSigner(fk));
+  // 1. A funding account (testnet helper, or the operator), and four user wallets under it.
+  const fromOperator = process.argv.includes("--fund-from-operator");
+  let funder: Account;
+  if (fromOperator) {
+    const op = process.env.OPERATOR_ACCOUNT_ID;
+    const sk = process.env.OPERATOR_PRIVATE_KEY;
+    if (!op || !sk) throw new Error("OPERATOR_ACCOUNT_ID / OPERATOR_PRIVATE_KEY are not set");
+    funder = new Account(op, provider, KeyPairSigner.fromSecretKey(sk as KeyPairString));
+  } else {
+    const fk = KeyPair.fromRandom("ed25519");
+    const funderId = `users-${Date.now()}.testnet`;
+    const res = await fetch(HELPER, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ newAccountId: funderId, newAccountPublicKey: fk.getPublicKey().toString() }) });
+    if (!res.ok) throw new Error(`testnet helper refused ${funderId}: HTTP ${res.status} (try --fund-from-operator)`);
+    await waitFor("funder account", async () => provider.viewAccount({ accountId: funderId }).then(() => true).catch(() => null), 60_000, 2000);
+    funder = new Account(funderId, provider, new KeyPairSigner(fk));
+  }
+  const funderId = funder.accountId;
   const users: Record<string, Account> = {};
   for (const name of ["alice", "bob", "dave", "erin"]) {
-    const id = `${name}.${funderId}`;
+    const id = fromOperator ? `${name}${tag}.${funderId}` : `${name}.${funderId}`;
     const k = KeyPair.fromRandom("ed25519");
     const out = await funder.signAndSendTransaction({
       receiverId: id,
-      actions: [actions.createAccount(), actions.transfer(nearToYocto("1.5")), actions.addFullAccessKey(k.getPublicKey())],
+      actions: [actions.createAccount(), actions.transfer(nearToYocto(fromOperator ? "0.3" : "1.5")), actions.addFullAccessKey(k.getPublicKey())],
       throwOnFailure: false,
       waitUntil: "FINAL",
     });

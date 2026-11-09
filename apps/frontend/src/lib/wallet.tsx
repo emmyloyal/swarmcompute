@@ -48,6 +48,22 @@ export const useWallet = () => {
 
 const PENDING = "swarmcompute:pending-tx";
 
+/**
+ * Gas each owner action attaches (Tgas). NEAR charges attached gas upfront
+ * (about 0.001 NEAR per Tgas, unused gas refunded), so a wallet must hold this
+ * much on top of any deposit: keep it near what the call needs, with headroom.
+ * Opening = the call + account creation + a 20 Tgas callback.
+ */
+const GAS_TERA: Record<string, number> = {
+  open_buyer_agent: 50,
+  open_seller_agent: 50,
+  deposit: 15,
+  set_request: 15,
+  update_seller: 15,
+  withdraw: 40,
+  leave_coalition: 100,
+};
+
 function failureText(status: unknown): string | null {
   if (typeof status !== "object" || status === null || !("Failure" in status)) return null;
   const f = (status as { Failure: unknown }).Failure;
@@ -137,7 +153,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }
       const out = await wallet.signAndSendTransaction({
         receiverId: meta.contractId,
-        actions: [actionCreators.functionCall(method, args, BigInt(opts.gasTera ?? 150) * 10n ** 12n, depositYocto)],
+        actions: [actionCreators.functionCall(method, args, BigInt(opts.gasTera ?? GAS_TERA[method] ?? 50) * 10n ** 12n, depositYocto)],
         callbackUrl: returnTo,
       } as Parameters<typeof wallet.signAndSendTransaction>[0]);
       try {

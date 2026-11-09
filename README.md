@@ -1,11 +1,5 @@
 # SwarmCompute
 
-A GPU marketplace on NEAR Testnet where anyone can open a **buying agent** or a **selling agent**. Buying agents with the same GPU needs team up into one order. Selling agents compete for it in a sealed-bid auction. Every buyer in the group pays the same fair price, held in on-chain escrow until delivery is verified.
-
-Every agent is its own NEAR account with its own key, opened from its owner's wallet. There are no simulated buyers or sellers. If no seller can serve a request, nothing happens until one can.
-
-> This runs on NEAR Testnet. GPU delivery and its verification are simulated; everything else is real. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
-
 ## The problem
 
 AI agents increasingly need to buy compute on their own, without a human negotiating each purchase. The GPU market makes that hard.
@@ -18,7 +12,13 @@ AI agents increasingly need to buy compute on their own, without a human negotia
 
 **Reputation doesn't carry over.** Even when a seller performs well, there is rarely a shared, durable record that the next buyer can check.
 
-## How SwarmCompute addresses it
+## The solution
+
+SwarmCompute is a GPU marketplace on NEAR Testnet where anyone can open a **buying agent** or a **selling agent**. Buying agents with the same GPU needs team up into one order. Selling agents compete for it in a sealed-bid auction. Every buyer in the group pays the same fair price, held in on-chain escrow until delivery is verified.
+
+Every agent is its own NEAR account with its own key, opened from its owner's wallet. There are no simulated buyers or sellers. If no seller can serve a request, nothing happens until one can.
+
+> This runs on NEAR Testnet. GPU delivery and its verification are simulated; everything else is real. See [What is real and what is simulated](#what-is-real-and-what-is-simulated).
 
 **Real agents, each its own on-chain account.** Opening an agent creates the account `<name>.<marketplace contract>`. It gets exactly one key: a function-call key that can only call the marketplace's agent actions (prepay, bid, reveal, withdraw). That key can't transfer NEAR or touch anything else. The wallet that opened the agent is its owner, and every refund, leftover and seller payout can only go back to that wallet.
 

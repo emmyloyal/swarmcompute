@@ -51,6 +51,8 @@ export function OpenAgentPage() {
   const taken = !!m && (m.buyers.some((b) => b.buyer_id === agentId) || m.sellers.some((s) => s.seller_id === agentId));
   const owned = m && accountId ? m.buyers.filter((b) => b.owner === accountId).length + m.sellers.filter((s) => s.owner === accountId).length : 0;
   const atCap = !!meta?.maxAgentsPerOwner && owned >= meta.maxAgentsPerOwner;
+  // The market host issues the agent's key and runs it; without it an agent can't be opened.
+  const hostOffline = !!meta && meta.host === null;
   const poolEmpty = !!meta?.sponsorPool && !!meta.agentGasFund && BigInt(meta.sponsorPool) < BigInt(meta.agentGasFund);
   const openFee = meta?.openFee ? BigInt(meta.openFee) : null;
   const leadSecs = meta ? meta.windows.prepay_secs + meta.windows.commit_secs + meta.windows.reveal_secs + meta.windows.delivery_secs : 0;
@@ -99,7 +101,7 @@ export function OpenAgentPage() {
       let out;
       if (role === "BUYER") {
         const b = v as { budget: bigint; vram: number; hours: number; max: bigint };
-        const chainNow = BigInt(meta.host.chainTimeNs || "0") || BigInt(Date.now()) * 1_000_000n;
+        const chainNow = BigInt(meta.host?.chainTimeNs || "0") || BigInt(Date.now()) * 1_000_000n;
         const deadline = (chainNow + BigInt(deadlineH) * 3600n * 1_000_000_000n).toString();
         out = await call(
           "open_buyer_agent",
@@ -260,12 +262,13 @@ export function OpenAgentPage() {
           </p>
         </div>
 
+        {hostOffline && <div className="err small">The market host is offline, so new agents can't be opened right now. The market data shown is read from the contract.</div>}
         {atCap && <div className="err small">This wallet already has the maximum of {meta?.maxAgentsPerOwner} agents.</div>}
         {poolEmpty && <div className="err small">The sponsor pool is empty right now, so new agents can't be opened. Try again later.</div>}
         {error && <div className="err small">{error}</div>}
         {!error && v.errs.length > 0 && name && <div className="small warn-text">{v.errs[0]}</div>}
         <div className="row">
-          <button className="btn primary" onClick={() => void submit()} disabled={busy || !meta || atCap || poolEmpty || (!!accountId && v.errs.length > 0)}>
+          <button className="btn primary" onClick={() => void submit()} disabled={busy || !meta || hostOffline || atCap || poolEmpty || (!!accountId && v.errs.length > 0)}>
             {busy ? "Waiting for your wallet…" : accountId ? `Open agent and send ${total !== null ? near(total) : ""}` : "Connect wallet to continue"}
           </button>
           <Link to="/" className="small">Cancel</Link>

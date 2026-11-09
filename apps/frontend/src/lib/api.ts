@@ -12,7 +12,8 @@ export interface Meta {
   maxAgentsPerOwner: number | null;
   sponsorPool: string | null;
   agentNameMaxLength: number;
-  host: { tick: number; updatedAt: string; chainTimeNs: string; lastError: string | null };
+  /** null when the market host is offline and this was read from the contract. */
+  host: { tick: number; updatedAt: string; chainTimeNs: string; lastError: string | null } | null;
 }
 
 export class ApiError extends Error {
@@ -78,6 +79,40 @@ export function useApi<T>(path: string | null, pollMs = 0): Loaded<T> {
       alive.current = false;
       if (timer) window.clearTimeout(timer);
     };
+  }, [path, pollMs]);
+  return state;
+}
+
+/**
+ * Poll the market host; if it can't be reached, read the same data straight
+ * from the contract (`fallback`), so a deployed site without a host still
+ * shows the real market.
+ */
+export function useHostOrChain<T>(path: string, pollMs: number, fallback: () => Promise<T>): Loaded<T> {
+  const [state, set] = useState<Loaded<T>>({ data: undefined, error: undefined, loading: true, at: undefined });
+  useEffect(() => {
+    let alive = true;
+    let timer: number | undefined;
+    const run = async () => {
+      try {
+        const data = await getJson<T>(path);
+        if (alive) set({ data, error: undefined, loading: false, at: Date.now() });
+      } catch (hostErr) {
+        try {
+          const data = await fallback();
+          if (alive) set({ data, error: undefined, loading: false, at: Date.now() });
+        } catch (chainErr) {
+          if (alive) set((s) => ({ ...s, loading: false, error: `${(hostErr as Error).message}; reading the contract directly also failed: ${(chainErr as Error).message}` }));
+        }
+      }
+      if (alive) timer = window.setTimeout(run, pollMs);
+    };
+    void run();
+    return () => {
+      alive = false;
+      if (timer) window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, pollMs]);
   return state;
 }

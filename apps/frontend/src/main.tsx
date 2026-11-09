@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
-import { MarketContext, MetaContext, useApi, type Meta } from "./lib/api";
+import { MarketContext, MetaContext, useHostOrChain, type Meta } from "./lib/api";
+import { loadMarketFromChain, metaFromChain } from "./lib/chain";
 import type { Market } from "./lib/types";
 import { WalletProvider } from "./lib/wallet";
 import { ActivityPage } from "./pages/Activity";
@@ -15,9 +16,10 @@ import { RoundPage, RoundsPage } from "./pages/Rounds";
 import "./styles.css";
 
 function App() {
-  const meta = useApi<Meta>("/api/meta", 30_000);
+  const meta = useHostOrChain<Meta>("/api/meta", 30_000, metaFromChain);
   // One shared poll of the market; the host re-reads the chain every few seconds.
-  const market = useApi<Market>("/api/market", 4000);
+  // Without a reachable host, the same data is read from the contract directly.
+  const market = useHostOrChain<Market>("/api/market", 6000, loadMarketFromChain);
   return (
     <MetaContext.Provider value={meta.data}>
       <MarketContext.Provider value={market}>

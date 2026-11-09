@@ -1,10 +1,22 @@
 import { Feed } from "./Rounds";
 import { Empty, LoadState, PageHead } from "../components/ui";
-import { useApi } from "../lib/api";
+import { useApi, useMarket } from "../lib/api";
 import type { Activity } from "../lib/types";
 
 export function ActivityPage() {
-  const a = useApi<Activity[]>("/api/activity?limit=200", 5000);
+  const { data: m } = useMarket();
+  const offline = m?.source === "chain";
+  const a = useApi<Activity[]>(offline ? null : "/api/activity?limit=200", 5000);
+  if (offline) {
+    return (
+      <div className="page">
+        <PageHead title="Activity" />
+        <div className="card">
+          <Empty title="The activity log is kept by the market host">The host is offline right now. Rounds, bids and results are still shown from the contract.</Empty>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="page">
       <PageHead

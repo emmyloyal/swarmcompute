@@ -4,7 +4,7 @@ import { Feed } from "./Rounds";
 import { AccountLink, AgentLink, Countdown, Empty, LoadState, PageHead, StatePill } from "../components/ui";
 import { useApi, useMarket, useMeta } from "../lib/api";
 import { agentName, near, nsToMs, parseNear, perHour, strategyLabel, WAIT_TEXT, when } from "../lib/format";
-import { FINISHED, GPU_MODELS, type Activity, type Buyer, type GpuModel, type Purchase, type Seller, type WaitReason } from "../lib/types";
+import { FINISHED, GPU_MODELS, type Activity, type Buyer, type GpuModel, type Market, type Purchase, type Seller, type WaitReason } from "../lib/types";
 import { useWallet } from "../lib/wallet";
 
 interface AgentDetail {
@@ -14,6 +14,17 @@ interface AgentDetail {
   waiting: WaitReason | null;
   purchases: Purchase[];
   activity: Activity[];
+}
+
+/** An agent's page data from contract data alone (no host: no activity log, no waiting reason). */
+function agentFromMarket(m: Market, id: string): AgentDetail | null {
+  const buyer = m.buyers.find((b) => b.buyer_id === id) ?? null;
+  const seller = m.sellers.find((s) => s.seller_id === id) ?? null;
+  if (!buyer && !seller) return null;
+  const purchases = m.purchases.filter(
+    (p) => p.winner_seller_id === id || p.allocations.some((a) => a.buyer_id === id) || p.bids.some((b) => b.seller_id === id) || m.coalitions[p.coalition_id]?.members.some((x) => x.buyer_id === id),
+  );
+  return { buyer, seller, hosted: true, waiting: null, purchases, activity: [] };
 }
 
 export function buyerStatus(b: Buyer): string {
@@ -30,8 +41,12 @@ export function sellerStatus(s: Seller): string {
 export function AgentPage() {
   const { agentId } = useParams();
   const { accountId } = useWallet();
-  const d = useApi<AgentDetail>(`/api/agents/${agentId}`, 5000);
   const { data: m } = useMarket();
+  // Without the market host, build the same view from the contract data.
+  const offline = m?.source === "chain";
+  const fetched = useApi<AgentDetail>(offline ? null : `/api/agents/${agentId}`, 5000);
+  const local = offline && m ? agentFromMarket(m, agentId!) : undefined;
+  const d = offline ? { data: local ?? undefined, error: local === null ? "not found" : undefined, loading: false } : fetched;
 
   if (!d.data) {
     if (d.error?.includes("not found")) {
@@ -126,7 +141,13 @@ export function AgentPage() {
             <div className="section-head">
               <h2>What this agent did</h2>
             </div>
-            <div className="card">{activity.length ? <Feed items={activity} showRound /> : <Empty title="Nothing yet" />}</div>
+            <div className="card">
+              {activity.length ? (
+                <Feed items={activity} showRound />
+              ) : (
+                <Empty title={offline ? "The activity log is kept by the market host" : "Nothing yet"}>{offline ? "The host is offline right now; this agent's transactions are on the explorer." : undefined}</Empty>
+              )}
+            </div>
           </section>
         </div>
         <div className="stack">
@@ -276,7 +297,7 @@ function BuyerControls({ b, purchases }: { b: Buyer; purchases: Purchase[] }) {
     const h = Number(hours);
     const vr = Number(vram);
     if (!mx || !Number.isInteger(h) || h < 1 || !Number.isInteger(vr) || vr < 1) return;
-    const now = BigInt(meta?.host.chainTimeNs || "0") || BigInt(Date.now()) * 1_000_000n;
+    const now = BigInt(meta?.host?.chainTimeNs || "0") || BigInt(Date.now()) * 1_000_000n;
     const ok = await tx.run("Updating the request", "set_request", {
       buyer_id: b.buyer_id,
       request: { gpu_model: gpu, vram_gb: vr, hours: h, max_price_per_hour: mx.toString(), deadline: (now + BigInt(days * 24 * 3600) * 1_000_000_000n).toString() },

@@ -52,7 +52,7 @@ export function MarketPage() {
       <section>
         <div className="section-head">
           <h2>Live rounds</h2>
-          <p>Updated {ago(m.updatedAt)} from the contract</p>
+          <p>{m.source === "chain" ? "Read directly from the contract" : `Updated ${ago(m.updatedAt)} by the market host`}</p>
         </div>
         {live.length ? (
           <div className="stack">
@@ -100,7 +100,7 @@ export function MarketPage() {
                         {b.request!.gpu_model} ≥{b.request!.vram_gb} GB · {b.request!.hours} h
                       </td>
                       <td className="num">{perHour(b.request!.max_price_per_hour)}</td>
-                      <td className="small muted">{m.waiting[b.buyer_id] ? WAIT_TEXT[m.waiting[b.buyer_id]!] : "Being grouped on the next tick."}</td>
+                      <td className="small muted">{m.source === "chain" ? "Waiting for the market host, which is offline." : m.waiting[b.buyer_id] ? WAIT_TEXT[m.waiting[b.buyer_id]!] : "Being grouped on the next tick."}</td>
                     </tr>
                   ))}
                 </tbody>

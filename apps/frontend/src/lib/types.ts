@@ -138,6 +138,8 @@ export interface Market {
   waiting: Record<string, WaitReason>;
   hosted: string[];
   lastError: string | null;
+  /** "chain": read straight from the contract because the market host is offline. */
+  source?: "host" | "chain";
 }
 
 export interface Activity {

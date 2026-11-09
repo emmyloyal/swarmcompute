@@ -75,6 +75,13 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
+        {market.data?.source === "chain" && (
+          <div className="toast warn" role="status">
+            <span>
+              Read-only: the market host is offline, so this page reads the market straight from the contract. Opening agents and running rounds resume when the host is back.
+            </span>
+          </div>
+        )}
         {flash && (
           <div className={`toast ${flash.kind}`} role="status">
             <span>{flash.text}</span>

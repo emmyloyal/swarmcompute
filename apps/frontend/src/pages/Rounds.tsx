@@ -171,7 +171,12 @@ export function RoundPage() {
   const { data: m } = useMarket();
   const { accountId } = useWallet();
   const live = m?.purchases.find((p) => p.purchase_id === purchaseId);
-  const d = useApi<RoundDetail>(`/api/purchases/${purchaseId}`, live && !FINISHED.includes(live.state) ? 4000 : 0);
+  const offline = m?.source === "chain";
+  const fetched = useApi<RoundDetail>(offline ? null : `/api/purchases/${purchaseId}`, live && !FINISHED.includes(live.state) ? 4000 : 0);
+  // Without the market host, the round comes from the contract data (no timeline).
+  const d = offline
+    ? { data: live ? { purchase: live, coalition: m!.coalitions[live.coalition_id] ?? null, activity: [] } : undefined, error: live ? undefined : "not found among recent rounds", loading: false }
+    : fetched;
   if (!d.data || !m) return <div className="page"><PageHead title="Round" /><LoadState error={d.error} loading={d.loading} label="this round" /></div>;
   const p = live ?? d.data.purchase;
   const c = m.coalitions[p.coalition_id] ?? d.data.coalition ?? undefined;
@@ -226,7 +231,11 @@ export function RoundPage() {
           <p>Every step the market host took, with its transaction</p>
         </div>
         <div className="card">
-          {d.data.activity.length ? <Feed items={d.data.activity} /> : <Empty title="Nothing recorded yet" />}
+          {d.data.activity.length ? (
+            <Feed items={d.data.activity} />
+          ) : (
+            <Empty title={offline ? "The timeline is kept by the market host" : "Nothing recorded yet"}>{offline ? "The host is offline right now. Every step is still on the contract and the explorer." : undefined}</Empty>
+          )}
         </div>
       </section>
     </div>

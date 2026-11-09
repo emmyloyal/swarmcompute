@@ -1,6 +1,13 @@
 /**
  * Typed wrapper over the marketplace contract (contracts/marketplace).
  * Money crosses the boundary as decimal strings (RULES.md R3).
+ *
+ * Who signs what (RULES.md R8):
+ *   operator  register_coalition, create_purchase, open_bidding, close_auction,
+ *             leave_coalition (for an agent that can't afford its prepayment),
+ *             start_delivery, submit_delivery_report, payout retry, expire
+ *   verifier  verify
+ *   agent     prepay (buyer), commit_bid / reveal_bid (seller), each with its own key
  */
 import type { GpuModel } from "@swarmcompute/shared";
 import { ChainCallError, type ChainCaller, type TxResult } from "./types.js";
@@ -13,11 +20,77 @@ export interface ContractWindows {
   verification_secs: number;
 }
 
+export interface BuyerRequest {
+  gpu_model: GpuModel;
+  vram_gb: number;
+  hours: number;
+  max_price_per_hour: string;
+  /** ns since epoch */
+  deadline: string;
+}
+
+export interface ContractBuyer {
+  buyer_id: string;
+  owner: string;
+  opened: boolean;
+  created_at: string;
+  request: BuyerRequest | null;
+  coalition_id: string | null;
+  available: string;
+  reserved: string;
+  spent: string;
+  withdrawing: string;
+}
+
+export interface GpuOffer {
+  gpu_model: GpuModel;
+  vram_gb: number;
+  capacity_hours: number;
+}
+
+export type SellerStrategy = { kind: "AT_MINIMUM" } | { kind: "BELOW_CEILING"; discount_bps: number };
+
+export interface Reputation {
+  wins: number;
+  completed_deliveries: number;
+  failed_deliveries: number;
+  non_reveals: number;
+}
+
+export interface ContractSeller {
+  seller_id: string;
+  owner: string;
+  opened: boolean;
+  created_at: string;
+  active: boolean;
+  offers: GpuOffer[];
+  min_price_per_hour: string;
+  strategy: SellerStrategy;
+  reputation: Reputation;
+}
+
+export interface CoalitionMember {
+  buyer_id: string;
+  hours: number;
+  max_price_per_hour: string;
+}
+
+export interface ContractCoalition {
+  coalition_id: string;
+  gpu_model: GpuModel;
+  vram_gb: number;
+  min_members: number;
+  members: CoalitionMember[];
+  closed: boolean;
+  live_purchase_id: string | null;
+}
+
 export interface ContractBid {
   seller_id: string;
   commitment_hex: string;
   commit_block_height: string;
   revealed_price_per_hour: string | null;
+  reveal_block_height: string | null;
   eligible: boolean | null;
   ineligibility_reason: string | null;
 }
@@ -32,11 +105,16 @@ export interface ContractAllocation {
   refunded: string;
 }
 
+export type PurchaseState = "CREATED" | "BIDDING" | "FUNDED" | "DELIVERING" | "VERIFYING" | "COMPLETED" | "FAILED" | "EXPIRED" | "REFUNDED";
+export const TERMINAL_STATES: readonly PurchaseState[] = ["COMPLETED", "FAILED", "EXPIRED", "REFUNDED"];
+
 export interface ContractPurchase {
   purchase_id: string;
   auction_id: string;
   coalition_id: string;
-  state: "CREATED" | "BIDDING" | "FUNDED" | "DELIVERING" | "VERIFYING" | "COMPLETED" | "FAILED" | "EXPIRED" | "REFUNDED";
+  state: PurchaseState;
+  windows: ContractWindows;
+  created_at: string;
   prepay_deadline: string;
   commit_deadline: string | null;
   reveal_deadline: string | null;
@@ -49,57 +127,55 @@ export interface ContractPurchase {
   allocations: ContractAllocation[];
   deposited: string;
   held: string;
-  delivery_report_hash?: string | null;
-  verified_success?: boolean | null;
-  payout_in_flight?: boolean;
-  paid_out?: string;
+  delivery_report_hash: string | null;
+  verified_success: boolean | null;
+  verification_reason: string | null;
+  payout_in_flight: boolean;
+  paid_out: string;
 }
 
-export interface ContractBuyer {
-  buyer_id: string;
-  max_budget: string;
-  wallet: string;
-  reserved: string;
-  spent: string;
-  balance: string;
-  withdrawing: string;
-}
-
-export interface CoalitionMemberInput {
-  buyer_id: string;
-  hours: number;
-  max_price_per_hour: bigint;
+export interface ContractConfig {
+  owner: string;
+  operator: string;
+  verifier: string;
+  paused: boolean;
+  total_escrowed: string;
+  total_balances: string;
+  buyer_count: number;
+  seller_count: number;
+  purchase_count: number;
+  open_fee: string;
+  agent_gas_fund: string;
 }
 
 export interface MarketplaceContract {
-  getBuyer(buyerId: string): Promise<ContractBuyer | null>;
-  getSeller(sellerId: string): Promise<unknown | null>;
-  getCoalition(coalitionId: string): Promise<{ members: { buyer_id: string; hours: number; max_price_per_hour: string }[] } | null>;
-  getPurchase(purchaseId: string): Promise<ContractPurchase | null>;
+  readonly contractId: string;
   blockTimestampNs(): Promise<bigint>;
+  getConfig(): Promise<ContractConfig>;
+  listBuyers(): Promise<ContractBuyer[]>;
+  listSellers(): Promise<ContractSeller[]>;
+  listPurchaseIds(fromIndex: number, limit: number): Promise<string[]>;
+  getPurchase(purchaseId: string): Promise<ContractPurchase | null>;
+  getCoalition(coalitionId: string): Promise<ContractCoalition | null>;
+  accessKeys(accountId: string): ReturnType<ChainCaller["accessKeys"]>;
 
-  registerBuyer(buyerId: string, maxBudget: bigint, wallet: string): Promise<TxResult>;
-  registerSeller(sellerId: string, payoutAccountId: string, offers: { gpu_model: GpuModel; vram_gb: number; capacity_hours: number }[]): Promise<TxResult>;
-  registerCoalition(c: { coalitionId: string; gpuModel: GpuModel; vramGb: number; minMembers: number; members: CoalitionMemberInput[] }): Promise<TxResult>;
-  leaveCoalition(coalitionId: string, buyerId: string, purchaseId?: string): Promise<TxResult>;
+  registerCoalition(coalitionId: string, buyerIds: string[], minMembers: number): Promise<TxResult>;
   createPurchase(purchaseId: string, auctionId: string, coalitionId: string, windows: ContractWindows): Promise<TxResult>;
-  /** Signed by the buyer's own wallet; exactly hours × own max price. */
-  prepay(wallet: string, purchaseId: string, buyerId: string, amount: bigint): Promise<TxResult>;
+  /** Operator removes a member that can't afford its prepayment (before funding). */
+  leaveCoalition(coalitionId: string, buyerId: string, purchaseId?: string): Promise<TxResult>;
   openBidding(purchaseId: string): Promise<TxResult>;
-  commitBid(purchaseId: string, sellerId: string, commitmentHex: string): Promise<TxResult>;
-  revealBid(purchaseId: string, sellerId: string, pricePerHour: bigint, nonceHex: string): Promise<TxResult>;
-  /** Lowest eligible bid becomes the clearing price; excess is credited to each member. */
   closeAuction(purchaseId: string): Promise<TxResult>;
   startDelivery(purchaseId: string): Promise<TxResult>;
   submitDeliveryReport(purchaseId: string, reportHashHex: string): Promise<TxResult>;
-  /** Signed by the verifier only. Success starts the payout; failure credits members back. */
   verify(purchaseId: string, success: boolean, reason: string): Promise<TxResult>;
-  /** Retry a payout (anyone may call; destination fixed on-chain). */
   payout(purchaseId: string): Promise<TxResult>;
-  /** Expire a purchase whose deadline passed; held money is credited back to members. */
   expire(purchaseId: string): Promise<TxResult>;
-  /** Send a buyer's credited balance to its own wallet (anyone may call). */
-  withdrawBalance(buyerId: string): Promise<TxResult>;
+
+  /** Signed by the buyer agent's own key. */
+  prepay(agentKey: string, purchaseId: string, buyerId: string): Promise<TxResult>;
+  /** Signed by the seller agent's own key. */
+  commitBid(agentKey: string, purchaseId: string, sellerId: string, commitmentHex: string): Promise<TxResult>;
+  revealBid(agentKey: string, purchaseId: string, sellerId: string, pricePerHour: bigint, nonceHex: string): Promise<TxResult>;
 }
 
 function must(r: TxResult): TxResult {
@@ -113,74 +189,62 @@ function mustCall(r: TxResult): TxResult {
   return r;
 }
 
+const PAGE = 100;
+
 export class Marketplace implements MarketplaceContract {
   constructor(private readonly chain: ChainCaller) {}
 
-  getBuyer(buyerId: string) {
-    return this.chain.view<ContractBuyer | null>("get_buyer", { buyer_id: buyerId });
-  }
-  getSeller(sellerId: string) {
-    return this.chain.view<unknown | null>("get_seller", { seller_id: sellerId });
-  }
-  getCoalition(coalitionId: string) {
-    return this.chain.view<{ members: { buyer_id: string; hours: number; max_price_per_hour: string }[] } | null>("get_coalition", { coalition_id: coalitionId });
-  }
-  getPurchase(purchaseId: string) {
-    return this.chain.view<ContractPurchase | null>("get_purchase", { purchase_id: purchaseId });
+  get contractId() {
+    return this.chain.contractId;
   }
   blockTimestampNs() {
     return this.chain.blockTimestampNs();
   }
+  getConfig() {
+    return this.chain.view<ContractConfig>("get_config", {});
+  }
+  private async all<T>(method: string): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const page = await this.chain.view<T[]>(method, { from_index: from, limit: PAGE });
+      out.push(...page);
+      if (page.length < PAGE) return out;
+    }
+  }
+  listBuyers() {
+    return this.all<ContractBuyer>("list_buyers");
+  }
+  listSellers() {
+    return this.all<ContractSeller>("list_sellers");
+  }
+  listPurchaseIds(fromIndex: number, limit: number) {
+    return this.chain.view<string[]>("list_purchase_ids", { from_index: fromIndex, limit });
+  }
+  getPurchase(purchaseId: string) {
+    return this.chain.view<ContractPurchase | null>("get_purchase", { purchase_id: purchaseId });
+  }
+  getCoalition(coalitionId: string) {
+    return this.chain.view<ContractCoalition | null>("get_coalition", { coalition_id: coalitionId });
+  }
+  accessKeys(accountId: string) {
+    return this.chain.accessKeys(accountId);
+  }
 
-  async registerBuyer(buyerId: string, maxBudget: bigint, wallet: string) {
-    return must(await this.chain.call("operator", "register_buyer", { buyer_id: buyerId, max_budget: maxBudget.toString(), wallet }, { purpose: "register_buyer" }));
-  }
-  async registerSeller(sellerId: string, payoutAccountId: string, offers: { gpu_model: GpuModel; vram_gb: number; capacity_hours: number }[]) {
-    return must(await this.chain.call("operator", "register_seller", { seller_id: sellerId, payout_account_id: payoutAccountId, offers }, { purpose: "register_seller" }));
-  }
-  async registerCoalition(c: Parameters<MarketplaceContract["registerCoalition"]>[0]) {
+  async registerCoalition(coalitionId: string, buyerIds: string[], minMembers: number) {
     return must(
-      await this.chain.call(
-        "operator",
-        "register_coalition",
-        {
-          coalition_id: c.coalitionId,
-          gpu_model: c.gpuModel,
-          vram_gb: c.vramGb,
-          min_members: c.minMembers,
-          members: c.members.map((m) => ({ buyer_id: m.buyer_id, hours: m.hours, max_price_per_hour: m.max_price_per_hour.toString() })),
-        },
-        { purpose: "register_coalition", gasTera: 150 },
-      ),
+      await this.chain.call("operator", "register_coalition", { coalition_id: coalitionId, buyer_ids: buyerIds, min_members: minMembers }, { purpose: "register_coalition", gasTera: 150 }),
     );
-  }
-  async leaveCoalition(coalitionId: string, buyerId: string, purchaseId?: string) {
-    return must(await this.chain.call("operator", "leave_coalition", { coalition_id: coalitionId, buyer_id: buyerId }, { purpose: "leave_coalition", purchaseId, gasTera: 150 }));
   }
   async createPurchase(purchaseId: string, auctionId: string, coalitionId: string, windows: ContractWindows) {
     return must(
       await this.chain.call("operator", "create_purchase", { purchase_id: purchaseId, auction_id: auctionId, coalition_id: coalitionId, windows }, { purpose: "create_purchase", purchaseId }),
     );
   }
-  async prepay(wallet: string, purchaseId: string, buyerId: string, amount: bigint) {
-    // 20 Tgas: the sender must hold deposit + gas allowance at max gas price; prepay is a small call.
-    return must(await this.chain.callAsBuyerWallet(wallet, "prepay", { purchase_id: purchaseId, buyer_id: buyerId }, { purpose: "prepay", purchaseId, deposit: amount, gasTera: 20 }));
+  async leaveCoalition(coalitionId: string, buyerId: string, purchaseId?: string) {
+    return must(await this.chain.call("operator", "leave_coalition", { coalition_id: coalitionId, buyer_id: buyerId }, { purpose: "leave_coalition", purchaseId, gasTera: 150 }));
   }
   async openBidding(purchaseId: string) {
     return must(await this.chain.call("operator", "open_bidding", { purchase_id: purchaseId }, { purpose: "open_bidding", purchaseId }));
-  }
-  async commitBid(purchaseId: string, sellerId: string, commitmentHex: string) {
-    return must(await this.chain.call("operator", "commit_bid", { purchase_id: purchaseId, seller_id: sellerId, commitment_hex: commitmentHex }, { purpose: "commit_bid", purchaseId }));
-  }
-  async revealBid(purchaseId: string, sellerId: string, pricePerHour: bigint, nonceHex: string) {
-    return must(
-      await this.chain.call(
-        "operator",
-        "reveal_bid",
-        { purchase_id: purchaseId, seller_id: sellerId, price_per_hour: pricePerHour.toString(), nonce_hex: nonceHex },
-        { purpose: "reveal_bid", purchaseId },
-      ),
-    );
   }
   async closeAuction(purchaseId: string) {
     return must(await this.chain.call("operator", "close_auction", { purchase_id: purchaseId }, { purpose: "close_auction", purchaseId, gasTera: 200 }));
@@ -204,7 +268,20 @@ export class Marketplace implements MarketplaceContract {
   async expire(purchaseId: string) {
     return mustCall(await this.chain.call("operator", "expire", { purchase_id: purchaseId }, { purpose: "expire", purchaseId, gasTera: 200 }));
   }
-  async withdrawBalance(buyerId: string) {
-    return mustCall(await this.chain.call("operator", "withdraw_balance", { buyer_id: buyerId }, { purpose: "withdraw_balance", gasTera: 100 }));
+
+  private agentId(args: { buyer_id?: string; seller_id?: string }) {
+    return (args.buyer_id ?? args.seller_id)!;
+  }
+  async prepay(agentKey: string, purchaseId: string, buyerId: string) {
+    const args = { purchase_id: purchaseId, buyer_id: buyerId };
+    return must(await this.chain.callAsAgent(this.agentId(args), agentKey, "prepay", args, { purpose: "prepay", purchaseId }));
+  }
+  async commitBid(agentKey: string, purchaseId: string, sellerId: string, commitmentHex: string) {
+    const args = { purchase_id: purchaseId, seller_id: sellerId, commitment_hex: commitmentHex };
+    return must(await this.chain.callAsAgent(sellerId, agentKey, "commit_bid", args, { purpose: "commit_bid", purchaseId }));
+  }
+  async revealBid(agentKey: string, purchaseId: string, sellerId: string, pricePerHour: bigint, nonceHex: string) {
+    const args = { purchase_id: purchaseId, seller_id: sellerId, price_per_hour: pricePerHour.toString(), nonce_hex: nonceHex };
+    return must(await this.chain.callAsAgent(sellerId, agentKey, "reveal_bid", args, { purpose: "reveal_bid", purchaseId }));
   }
 }

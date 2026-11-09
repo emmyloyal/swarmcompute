@@ -4,7 +4,7 @@ These rules are binding for every change to this repository. R1–R7 restate the
 
 If a rule can't be met (for example a NEAR tool or RPC feature behaves differently than expected), stop. Document the problem and propose an alternative. Do not work around it silently.
 
-**Revision 2 (2026-11-09): real user agents.** The market no longer ships simulated buyers or sellers. Real people open buying and selling agents from their own NEAR wallets. Each agent is its own on-chain account with its own key (R19–R25). Rules R8, R11, R12, R13 and R16 were rewritten for this model. Rule numbers are unchanged so existing code citations stay valid.
+**Revision 2 (2026-11-09): real user agents.** The market no longer ships simulated buyers or sellers. Real people open buying and selling agents from their own NEAR wallets. Each agent is its own on-chain account with its own key (R19–R25). Rules R8, R11, R12, R13, R14 and R16 were rewritten for this model. Rule numbers are unchanged so existing code citations stay valid.
 
 ---
 
@@ -59,7 +59,7 @@ The system is never described as trustless.
 
 ## Messages and data
 
-**R14 — Structured, authenticated messages only.** Agents communicate only through the validated envelope in `packages/shared/src/messages`. Unknown types, invalid payloads, bad signatures, unauthorized senders, stale timestamps and replayed IDs are rejected *and logged*.
+**R14 — Agents act only through signed transactions.** Every agent action (prepay, commit, reveal, withdraw) is a NEAR transaction signed with that agent's own key, and the contract checks it. There is no off-chain channel between agents. The host records every transaction it sends (`blockchain_transactions`) and why (`host_activity`).
 
 **R15 — The contract is authoritative.** The database is a cache and an index. Agents, their terms and all financial history come from indexed contract events, not from backend bookkeeping. The reconciler flags drift instead of overwriting chain facts.
 

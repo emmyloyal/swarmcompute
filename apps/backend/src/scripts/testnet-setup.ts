@@ -4,13 +4,15 @@
  *   pnpm --filter @swarmcompute/backend testnet:setup
  *
  * 1. Creates a dev account through the testnet helper (testnet faucet funds it).
- *    It holds the owner, operator, funder and verifier roles (allowed in the
- *    demo, spec Section 8; separate fields so they can be split later).
+ *    It holds the owner, operator and verifier roles (separate fields so they
+ *    can be split later). It is never an agent and never owns one.
  * 2. Creates `market.<dev>` and, in one transaction, funds it, deploys
  *    contracts/marketplace/target/near/marketplace.wasm and calls `new`.
- * 3. Creates the 5 REAL seller payout accounts `seller1..5.<dev>`.
- * 4. Writes the account IDs and the private key into the repo-root `.env`
- *    (git-ignored, RULES.md R6). Never prints the key.
+ * 3. Writes the account IDs, the private key and fresh keystore / bid
+ *    encryption keys into the repo-root `.env` (git-ignored, RULES.md R6).
+ *    Never prints a key.
+ *
+ * No buyer or seller agents are created: real users open their own (R20, R25).
  *
  * Refuses to run if .env already points at a deployed contract (pass --force).
  */
@@ -19,7 +21,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Account, actions, JsonRpcProvider, KeyPair, KeyPairSigner, nearToYocto } from "near-api-js";
 import { toTxResult } from "../chain/near-client.js";
-import { generateBuyers } from "../sim/profiles.js";
+import { randomBytes } from "node:crypto";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ENV = resolve(ROOT, ".env");
@@ -91,59 +93,30 @@ async function main(): Promise<void> {
   if (!deploy.ok) throw new Error(`deploy failed in tx ${deploy.txHash}: ${JSON.stringify(deploy.error)}`);
   console.log(`contract ${contractId} deployed + initialised  tx ${deploy.txHash}`);
 
-  // 3. Real seller payout accounts.
-  const payouts: string[] = [];
-  for (let i = 1; i <= 5; i++) {
-    const id = `seller${i}.${devId}`;
-    const o = await dev.signAndSendTransaction({
-      receiverId: id,
-      actions: [actions.createAccount(), actions.transfer(nearToYocto("0.05")), actions.addFullAccessKey(key.getPublicKey())],
-      throwOnFailure: false,
-      waitUntil: "FINAL",
-    });
-    const r = toTxResult(o, devId, id, "create_account");
-    if (!r.ok) throw new Error(`creating ${id} failed in tx ${r.txHash}`);
-    payouts.push(id);
-    console.log(`payout account ${id}  tx ${r.txHash}`);
-  }
-
-  // 4. The 20 buyer agents' own wallets, topped up by the funder (this dev account)
-  //    with each buyer's budget plus a small gas allowance for its prepay transactions.
-  const seed = /^SIMULATION_SEED=(.*)$/m.exec(env)?.[1]?.trim() || "swarmcompute-demo-seed-1";
-  for (const b of generateBuyers(seed, new Date(), devId)) {
-    const o = await dev.signAndSendTransaction({
-      receiverId: b.wallet,
-      actions: [actions.createAccount(), actions.transfer(b.maxBudgetYocto + nearToYocto("0.03")), actions.addFullAccessKey(key.getPublicKey())],
-      throwOnFailure: false,
-      waitUntil: "FINAL",
-    });
-    const r = toTxResult(o, devId, b.wallet, "create_account");
-    if (!r.ok) throw new Error(`creating ${b.wallet} failed in tx ${r.txHash}`);
-    console.log(`buyer wallet ${b.wallet} (budget ${b.maxBudgetYocto} yocto + gas)  tx ${r.txHash}`);
-  }
-
-  // 5. .env (git-ignored).
+  // 3. .env (git-ignored).
   let text = env;
   const sk = key.toString();
+  const keyIfMissing = (k: string) => /^[0-9a-fA-F]{64}$/.test(/^${k}=(.*)$/m.exec(text)?.[1]?.trim() ?? "") ? null : randomBytes(32).toString("hex");
+  const fresh: Record<string, string> = {};
+  for (const k of ["KEYSTORE_ENCRYPTION_KEY", "BID_ENCRYPTION_KEY"]) {
+    const v = keyIfMissing(k);
+    if (v) fresh[k] = v;
+  }
   for (const [k, v] of Object.entries({
-    BUYER_WALLET_PARENT: devId,
-    BUYER_PRIVATE_KEY: sk,
+    ...fresh,
     NEAR_RPC_URL: RPC,
     MARKETPLACE_CONTRACT_ID: contractId,
     VITE_MARKETPLACE_CONTRACT_ID: contractId,
     OWNER_ACCOUNT_ID: devId,
     OPERATOR_ACCOUNT_ID: devId,
-    FUNDER_ACCOUNT_ID: devId,
     VERIFIER_ACCOUNT_ID: devId,
     OPERATOR_PRIVATE_KEY: sk,
-    FUNDER_PRIVATE_KEY: sk,
     VERIFIER_PRIVATE_KEY: sk,
-    SELLER_PAYOUT_ACCOUNTS: payouts.join(","),
   })) {
     text = setEnv(text, k, v);
   }
   writeFileSync(ENV, text, "utf8");
-  console.log(`\n.env updated (contract, roles, keys, payout accounts). Keys were written to .env only.`);
+  console.log(`\n.env updated (contract, roles, keys). Keys were written to .env only.`);
   console.log(`explorer: https://testnet.nearblocks.io/address/${contractId}`);
 }
 

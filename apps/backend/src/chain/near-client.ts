@@ -2,24 +2,26 @@
  * NEAR Testnet client (near-api-js 7.4.0, verified 2026-11-08).
  *
  * - Refuses to run unless the RPC reports chain_id "testnet" (RULES.md R1).
- * - One signer per role (RULES.md R8): the funder key is only used for `fund`,
- *   the verifier key only for `verify`, the operator key for everything else.
+ * - One signer per role (RULES.md R8): the verifier key only for `verify`, the
+ *   operator key for coalition and round management, and each agent's own key
+ *   (function-call only, R19) for that agent's prepay, bids and withdrawals.
  * - Returns the real execution outcome. Failed transactions are results, not
  *   exceptions, so the failure is recorded and shown (RULES.md R2). Only an RPC
  *   error (no tx hash) throws.
  */
 import { Account, actions, JsonRpcProvider, KeyPairSigner, type KeyPairString } from "near-api-js";
-import { parseEvents, type CallOptions, type ChainCaller, type ChainReader, type Role, type TxResult, type TxStatusView } from "./types.js";
+import { AGENT_METHODS, parseEvents, type AgentMethod, type CallOptions, type ChainCaller, type ChainReader, type Role, type TxResult, type TxStatusView } from "./types.js";
+
+/**
+ * Agents attach 30 Tgas: NEAR charges attached gas upfront at a pessimistic
+ * price, and an agent account holds only its small gas fund (contract AGENT_GAS_FUND).
+ */
+export const AGENT_GAS_TERA = 30;
 
 export interface NearChainConfig {
   rpcUrl: string;
   contractId: string;
   accounts: Record<Role, { accountId: string; privateKey: string }>;
-  /**
-   * Buyer agents' wallets: `<buyerNNN>.<parent>`, all holding `privateKey`
-   * (backend-held, like every simulated agent's key).
-   */
-  buyerWallets?: { parent: string; privateKey: string };
   /** Persists each submitted tx (blockchain_transactions). */
   recorder?: TxRecorder;
 }
@@ -76,7 +78,7 @@ export class NearChain implements ChainCaller, ChainReader {
       if (!byId.has(id)) byId.set(id, mk(r));
       return byId.get(id)!;
     };
-    this.accounts = { operator: get("operator"), funder: get("funder"), verifier: get("verifier") };
+    this.accounts = { operator: get("operator"), verifier: get("verifier") };
   }
 
   /** Connects and verifies the network is NEAR Testnet before anything is signed. */
@@ -93,7 +95,9 @@ export class NearChain implements ChainCaller, ChainReader {
 
   async call(role: Role, method: string, args: Record<string, unknown>, opts: CallOptions): Promise<TxResult> {
     if (method === "verify" && role !== "verifier") throw new Error("verify must be signed by the verifier (RULES.md R8)");
-    if (method === "prepay") throw new Error("prepay is signed only by the buyer's own wallet");
+    if ((AGENT_METHODS as readonly string[]).includes(method) && method !== "leave_coalition") {
+      throw new Error(`${method} is signed only by the agent's own key (RULES.md R8)`);
+    }
     const deposit = opts.deposit ?? 0n;
     const acct = this.accounts[role];
     const out = await acct.signAndSendTransaction({
@@ -107,28 +111,43 @@ export class NearChain implements ChainCaller, ChainReader {
     return res;
   }
 
-  private readonly buyerAccounts = new Map<string, Account>();
+  private readonly agentAccounts = new Map<string, { key: string; account: Account }>();
 
-  async callAsBuyerWallet(wallet: string, method: string, args: Record<string, unknown>, opts: CallOptions): Promise<TxResult> {
-    const bw = this.cfg.buyerWallets;
-    if (!bw) throw new Error("buyer wallets are not configured");
-    if (!wallet.endsWith(`.${bw.parent}`)) throw new Error(`${wallet} is not a buyer wallet under ${bw.parent}`);
-    if (method !== "prepay") throw new Error("buyer wallets only sign their own prepayment");
-    let acct = this.buyerAccounts.get(wallet);
-    if (!acct) {
-      acct = new Account(wallet, this.provider, KeyPairSigner.fromSecretKey(bw.privateKey as KeyPairString));
-      this.buyerAccounts.set(wallet, acct);
+  async callAsAgent(agentId: string, privateKey: string, method: AgentMethod, args: Record<string, unknown>, opts: CallOptions): Promise<TxResult> {
+    if (!AGENT_METHODS.includes(method)) throw new Error(`agents can't call ${method}`);
+    if (!agentId.endsWith(`.${this.contractId}`)) throw new Error(`${agentId} is not an agent of ${this.contractId}`);
+    if (opts.deposit) throw new Error("agent keys can't attach deposits");
+    // One Account per agent, so its nonces stay ordered.
+    let entry = this.agentAccounts.get(agentId);
+    if (!entry || entry.key !== privateKey) {
+      entry = { key: privateKey, account: new Account(agentId, this.provider, KeyPairSigner.fromSecretKey(privateKey as KeyPairString)) };
+      this.agentAccounts.set(agentId, entry);
     }
-    const deposit = opts.deposit ?? 0n;
-    const out = await acct.signAndSendTransaction({
+    const out = await entry.account.signAndSendTransaction({
       receiverId: this.contractId,
-      actions: [actions.functionCall(method, args, BigInt(opts.gasTera ?? 100) * 10n ** 12n, deposit)],
+      actions: [actions.functionCall(method, args, BigInt(AGENT_GAS_TERA) * 10n ** 12n, 0n)],
       throwOnFailure: false,
       waitUntil: "FINAL",
     });
-    const res = toTxResult(out, wallet, this.contractId, method);
-    await this.cfg.recorder?.record(res, { ...opts, deposit });
+    const res = toTxResult(out, agentId, this.contractId, method);
+    await this.cfg.recorder?.record(res, { ...opts, deposit: 0n });
     return res;
+  }
+
+  async accessKeys(accountId: string) {
+    let out: { keys: { public_key: string; access_key: { permission: unknown } }[] };
+    try {
+      out = (await withRateLimitRetry(() => this.provider.viewAccessKeyList({ accountId, finalityQuery: { finality: "final" } }))) as unknown as typeof out;
+    } catch (err) {
+      if (/does not exist|UNKNOWN_ACCOUNT|doesn't exist/i.test(String((err as Error).message ?? err))) return null;
+      throw err;
+    }
+    return out.keys.map((k) => {
+      const p = k.access_key.permission as "FullAccess" | { FunctionCall?: { receiver_id: string; method_names: string[] } };
+      if (p === "FullAccess" || (typeof p === "object" && p !== null && "FullAccess" in p)) return { publicKey: k.public_key, fullAccess: true };
+      const fc = typeof p === "object" && p !== null ? p.FunctionCall : undefined;
+      return { publicKey: k.public_key, fullAccess: false, receiverId: fc?.receiver_id, methods: fc?.method_names };
+    });
   }
 
   async view<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {

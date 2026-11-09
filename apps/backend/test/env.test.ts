@@ -7,62 +7,52 @@ const FAKE_KEY = `ed25519:${"5".repeat(88)}`;
 const VALID: Record<string, string> = {
   DATABASE_URL: "postgres://swarm:x@localhost:5432/swarmcompute",
   NEAR_NETWORK: "testnet",
-  NEAR_RPC_URL: "https://rpc.testnet.near.org",
+  NEAR_RPC_URL: "https://test.rpc.fastnear.com",
   NEAR_EXPLORER_TX_URL: "https://testnet.nearblocks.io/txns",
-  MARKETPLACE_CONTRACT_ID: "marketplace.op.testnet",
-  OWNER_ACCOUNT_ID: "op.testnet",
+  MARKETPLACE_CONTRACT_ID: "market.op.testnet",
   OPERATOR_ACCOUNT_ID: "op.testnet",
-  FUNDER_ACCOUNT_ID: "funder.testnet",
   VERIFIER_ACCOUNT_ID: "verifier.testnet",
   OPERATOR_PRIVATE_KEY: FAKE_KEY,
-  FUNDER_PRIVATE_KEY: FAKE_KEY,
   VERIFIER_PRIVATE_KEY: FAKE_KEY,
-  BUYER_WALLET_PARENT: "op.testnet",
-  BUYER_PRIVATE_KEY: FAKE_KEY,
-  SELLER_PAYOUT_ACCOUNTS: "seller1.op.testnet, seller2.op.testnet,seller3.op.testnet,seller4.op.testnet,seller5.op.testnet",
-  AGENT_HMAC_MASTER_SECRET: "ab".repeat(32),
+  KEYSTORE_ENCRYPTION_KEY: "ab".repeat(32),
   BID_ENCRYPTION_KEY: "cd".repeat(32),
-  SIMULATION_SEED: "seed-1",
 };
 
 describe("loadConfig", () => {
   it("accepts a valid testnet configuration and applies defaults", () => {
     const c = loadConfig(VALID);
-    expect(c.BACKEND_PORT).toBe(4000);
-    expect(c.MESSAGE_MAX_AGE_SECONDS).toBe(300);
-    expect(c.SELLER_PAYOUT_ACCOUNTS).toHaveLength(5);
-    expect(c.bidEncryptionKey).toHaveLength(32);
+    expect(c.port).toBe(4000);
+    expect(c.corsOrigins).toBe("*");
+    expect(c.PREPAY_SECS).toBe(180);
+    expect(c.keystoreKey).toHaveLength(32);
     expect(c.explorerTxUrl("ABC")).toBe("https://testnet.nearblocks.io/txns/ABC");
+  });
+
+  it("uses the platform PORT unless BACKEND_PORT is set, and parses CORS origins", () => {
+    expect(loadConfig({ ...VALID, PORT: "8080" }).port).toBe(8080);
+    expect(loadConfig({ ...VALID, PORT: "8080", BACKEND_PORT: "5000" }).port).toBe(5000);
+    expect(loadConfig({ ...VALID, CORS_ORIGINS: "https://a.app, https://b.app" }).corsOrigins).toEqual(["https://a.app", "https://b.app"]);
   });
 
   it.each([
     ["NEAR_NETWORK", "mainnet"],
     ["NEAR_RPC_URL", "https://rpc.mainnet.near.org"],
-    ["NEAR_RPC_URL", "https://rpc.near.org"],
-    ["NEAR_RPC_URL", "http://rpc.testnet.near.org"],
-    ["NEAR_EXPLORER_TX_URL", "https://nearblocks.io/txns/"],
-    ["FUNDER_ACCOUNT_ID", "funder.near"],
-    ["MARKETPLACE_CONTRACT_ID", "Marketplace.testnet"],
+    ["NEAR_RPC_URL", "http://example.com"],
+    ["NEAR_EXPLORER_TX_URL", "https://nearblocks.io/txns"],
+    ["MARKETPLACE_CONTRACT_ID", "market.near"],
     ["OPERATOR_PRIVATE_KEY", "not-a-key"],
-    ["BID_ENCRYPTION_KEY", "cd".repeat(31)],
-    ["AGENT_HMAC_MASTER_SECRET", "ab".repeat(16)],
-    ["SELLER_PAYOUT_ACCOUNTS", "a.testnet,b.testnet"],
-    ["SELLER_PAYOUT_ACCOUNTS", "a.testnet,a.testnet,b.testnet,c.testnet,d.testnet"],
+    ["KEYSTORE_ENCRYPTION_KEY", "ab".repeat(16)],
+    ["BID_ENCRYPTION_KEY", "zz".repeat(32)],
   ])("rejects %s=%s", (key, value) => {
     expect(() => loadConfig({ ...VALID, [key]: value })).toThrow(ConfigError);
   });
 
-  it("treats empty values as missing", () => {
-    expect(() => loadConfig({ ...VALID, FUNDER_PRIVATE_KEY: "" })).toThrow(/FUNDER_PRIVATE_KEY/);
-  });
-
-  it("never echoes secret values in errors", () => {
-    const secret = `ed25519:${"9".repeat(10)}`;
+  it("requires distinct encryption keys and never echoes values", () => {
+    expect(() => loadConfig({ ...VALID, BID_ENCRYPTION_KEY: VALID.KEYSTORE_ENCRYPTION_KEY! })).toThrow(/must differ/);
     try {
-      loadConfig({ ...VALID, FUNDER_PRIVATE_KEY: secret });
-      expect.unreachable();
+      loadConfig({ ...VALID, OPERATOR_PRIVATE_KEY: "ed25519:leaky" });
     } catch (e) {
-      expect((e as Error).message).not.toContain(secret);
+      expect((e as Error).message).not.toContain("leaky");
     }
   });
 });

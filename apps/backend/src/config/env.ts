@@ -11,11 +11,9 @@ const Account = z.string().refine(isTestnetAccountId, "must be a NEAR testnet ac
 const PrivateKey = z
   .string()
   .regex(/^ed25519:[1-9A-HJ-NP-Za-km-z]{80,90}$/, "must be ed25519:<base58 secret key>");
-const Hex = (bytes: number, exact: boolean) =>
-  z
-    .string()
-    .regex(/^[0-9a-fA-F]+$/, "must be hex")
-    .refine((s) => s.length % 2 === 0 && (exact ? s.length === bytes * 2 : s.length >= bytes * 2), `must be ${exact ? "exactly" : "at least"} ${bytes} bytes of hex`);
+const Key32 = z
+  .string()
+  .regex(/^[0-9a-fA-F]{64}$/, "must be exactly 32 bytes of hex");
 
 const RpcUrl = z
   .string()
@@ -23,10 +21,13 @@ const RpcUrl = z
   .refine((u) => u.startsWith("https://") || /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(u), "must be https (or local http)")
   .refine((u) => !/mainnet/i.test(u) && !/(^|\/\/|\.)rpc\.near\.org/i.test(u), "mainnet RPC endpoints are forbidden");
 
+const Secs = (def: number) => z.coerce.number().int().min(1).max(30 * 24 * 3600).default(def);
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  BACKEND_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  // Hosting platforms set PORT; BACKEND_PORT wins when both are set.
+  PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  BACKEND_PORT: z.coerce.number().int().min(1).max(65535).optional(),
 
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, "must be a postgres:// URL"),
 
@@ -35,36 +36,38 @@ const EnvSchema = z.object({
   NEAR_EXPLORER_TX_URL: z.string().url().refine((u) => /testnet/i.test(u), "explorer must be a testnet explorer"),
 
   MARKETPLACE_CONTRACT_ID: Account,
-  OWNER_ACCOUNT_ID: Account,
+  // OPERATOR: forms coalitions, opens rounds, runs the simulated delivery steps (RULES.md R8).
+  // VERIFIER: the only account allowed to call verify().
   OPERATOR_ACCOUNT_ID: Account,
-  FUNDER_ACCOUNT_ID: Account,
   VERIFIER_ACCOUNT_ID: Account,
-
   OPERATOR_PRIVATE_KEY: PrivateKey,
-  FUNDER_PRIVATE_KEY: PrivateKey,
   VERIFIER_PRIVATE_KEY: PrivateKey,
 
-  // Buyer agents' own wallets: buyer001.<parent> … buyer020.<parent>, topped up by the funder.
-  BUYER_WALLET_PARENT: Account,
-  BUYER_PRIVATE_KEY: PrivateKey,
+  // AES-256-GCM keys. KEYSTORE encrypts agents' private keys at rest (R19);
+  // BID encrypts unrevealed bid prices and nonces (R13).
+  KEYSTORE_ENCRYPTION_KEY: Key32,
+  BID_ENCRYPTION_KEY: Key32,
 
-  SELLER_PAYOUT_ACCOUNTS: z
-    .string()
-    .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean))
-    .pipe(z.array(Account).length(5, "exactly 5 seller payout accounts (seller-01..seller-05)"))
-    .refine((a) => new Set(a).size === a.length, "seller payout accounts must be distinct"),
+  // Comma-separated origins allowed to call the API from a browser; "*" for any.
+  CORS_ORIGINS: z.string().default("*"),
 
-  AGENT_HMAC_MASTER_SECRET: Hex(32, false),
-  MESSAGE_MAX_AGE_SECONDS: z.coerce.number().int().min(5).max(3600).default(300),
-  BID_ENCRYPTION_KEY: Hex(32, true),
-
-  SIMULATION_SEED: z.string().min(1).max(128),
+  // Market host cadence and auction phase lengths (chain seconds).
+  HOST_TICK_SECONDS: z.coerce.number().int().min(2).max(600).default(8),
+  PREPAY_SECS: Secs(180),
+  COMMIT_SECS: Secs(60),
+  REVEAL_SECS: Secs(60),
+  DELIVERY_SECS: Secs(600),
+  VERIFICATION_SECS: Secs(600),
+  // After a failed attempt, a buyer isn't regrouped until sellers change or this passes.
+  RETRY_COOLDOWN_SECS: Secs(900),
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;
 
-export interface Config extends Omit<RawEnv, "AGENT_HMAC_MASTER_SECRET" | "BID_ENCRYPTION_KEY"> {
-  agentHmacMasterSecret: Buffer;
+export interface Config extends Omit<RawEnv, "KEYSTORE_ENCRYPTION_KEY" | "BID_ENCRYPTION_KEY" | "PORT" | "BACKEND_PORT" | "CORS_ORIGINS"> {
+  port: number;
+  corsOrigins: "*" | string[];
+  keystoreKey: Buffer;
   bidEncryptionKey: Buffer;
   explorerTxUrl(txHash: string): string;
 }
@@ -82,11 +85,17 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`);
     throw new ConfigError(`Invalid configuration:\n${lines.join("\n")}`);
   }
-  const { AGENT_HMAC_MASTER_SECRET, BID_ENCRYPTION_KEY, ...rest } = parsed.data;
+  const { KEYSTORE_ENCRYPTION_KEY, BID_ENCRYPTION_KEY, PORT, BACKEND_PORT, CORS_ORIGINS, ...rest } = parsed.data;
+  if (KEYSTORE_ENCRYPTION_KEY.toLowerCase() === BID_ENCRYPTION_KEY.toLowerCase()) {
+    throw new ConfigError("Invalid configuration:\n  - KEYSTORE_ENCRYPTION_KEY: must differ from BID_ENCRYPTION_KEY");
+  }
   const base = rest.NEAR_EXPLORER_TX_URL.endsWith("/") ? rest.NEAR_EXPLORER_TX_URL : `${rest.NEAR_EXPLORER_TX_URL}/`;
+  const origins = CORS_ORIGINS.trim() === "*" ? "*" : CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
   return {
     ...rest,
-    agentHmacMasterSecret: Buffer.from(AGENT_HMAC_MASTER_SECRET, "hex"),
+    port: BACKEND_PORT ?? PORT ?? 4000,
+    corsOrigins: origins,
+    keystoreKey: Buffer.from(KEYSTORE_ENCRYPTION_KEY, "hex"),
     bidEncryptionKey: Buffer.from(BID_ENCRYPTION_KEY, "hex"),
     explorerTxUrl: (txHash) => `${base}${encodeURIComponent(txHash)}`,
   };

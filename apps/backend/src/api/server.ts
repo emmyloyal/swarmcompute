@@ -69,6 +69,8 @@ export function buildRoutes(d: ApiDeps): { method: "GET" | "POST"; re: RegExp; h
           windows: d.meta.windows,
           openFee: s.config?.open_fee ?? null,
           agentGasFund: s.config?.agent_gas_fund ?? null,
+          maxAgentsPerOwner: s.config?.max_agents_per_owner ?? null,
+          sponsorPool: s.config?.sponsor_pool ?? null,
           agentNameMaxLength: maxAgentNameLength(d.meta.contractId),
           host: { tick: s.tick, updatedAt: s.updatedAt, chainTimeNs: s.chainTimeNs, lastError: s.lastError },
         };

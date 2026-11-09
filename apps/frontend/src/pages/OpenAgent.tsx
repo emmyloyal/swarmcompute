@@ -49,6 +49,9 @@ export function OpenAgentPage() {
   const maxLen = meta?.agentNameMaxLength ?? 32;
   const agentId = meta && name ? `${name}.${meta.contractId}` : "";
   const taken = !!m && (m.buyers.some((b) => b.buyer_id === agentId) || m.sellers.some((s) => s.seller_id === agentId));
+  const owned = m && accountId ? m.buyers.filter((b) => b.owner === accountId).length + m.sellers.filter((s) => s.owner === accountId).length : 0;
+  const atCap = !!meta?.maxAgentsPerOwner && owned >= meta.maxAgentsPerOwner;
+  const poolEmpty = !!meta?.sponsorPool && !!meta.agentGasFund && BigInt(meta.sponsorPool) < BigInt(meta.agentGasFund);
   const openFee = meta?.openFee ? BigInt(meta.openFee) : null;
   const leadSecs = meta ? meta.windows.prepay_secs + meta.windows.commit_secs + meta.windows.reveal_secs + meta.windows.delivery_secs : 0;
 
@@ -237,7 +240,7 @@ export function OpenAgentPage() {
 
         <div className="summary">
           <div className="spread">
-            <span>Opening fee</span>
+            <span>Opening fee (the rest is sponsored)</span>
             <span>{openFee !== null ? near(openFee) : "–"}</span>
           </div>
           {role === "BUYER" && (
@@ -251,15 +254,18 @@ export function OpenAgentPage() {
             <b>{total !== null ? near(total) : "–"}</b>
           </div>
           <p className="small faint">
-            Of the fee, {meta?.agentGasFund ? near(meta.agentGasFund) : "–"} goes to the agent's own account to pay for its transactions; the rest covers its storage in the contract.
+            SwarmCompute sponsors the rest: {meta?.agentGasFund ? near(meta.agentGasFund) : "–"} sent to your agent's own account to pay for its transactions, plus its storage.
+            {meta?.maxAgentsPerOwner ? ` Each wallet can open up to ${meta.maxAgentsPerOwner} agents.` : ""}
             {role === "BUYER" ? " You can withdraw the budget at any time it isn't reserved in a round." : ""}
           </p>
         </div>
 
+        {atCap && <div className="err small">This wallet already has the maximum of {meta?.maxAgentsPerOwner} agents.</div>}
+        {poolEmpty && <div className="err small">The sponsor pool is empty right now, so new agents can't be opened. Try again later.</div>}
         {error && <div className="err small">{error}</div>}
         {!error && v.errs.length > 0 && name && <div className="small warn-text">{v.errs[0]}</div>}
         <div className="row">
-          <button className="btn primary" onClick={() => void submit()} disabled={busy || !meta || (!!accountId && v.errs.length > 0)}>
+          <button className="btn primary" onClick={() => void submit()} disabled={busy || !meta || atCap || poolEmpty || (!!accountId && v.errs.length > 0)}>
             {busy ? "Waiting for your wallet…" : accountId ? `Open agent and send ${total !== null ? near(total) : ""}` : "Connect wallet to continue"}
           </button>
           <Link to="/" className="small">Cancel</Link>

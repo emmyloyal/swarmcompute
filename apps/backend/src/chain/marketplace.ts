@@ -146,6 +146,8 @@ export interface ContractConfig {
   purchase_count: number;
   open_fee: string;
   agent_gas_fund: string;
+  max_agents_per_owner: number;
+  sponsor_pool: string;
 }
 
 export interface MarketplaceContract {

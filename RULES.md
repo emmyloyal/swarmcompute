@@ -81,7 +81,9 @@ Each agent is either a **buyer** or a **seller**, and a wallet can own any numbe
 - `reserved` — in live purchases;
 - `spent` — paid to sellers.
 
-Withdrawals always go to the owner (R11). Opening an agent also funds the new account with a small gas allowance from the owner's deposit, so it can pay for its own transactions.
+Withdrawals always go to the owner (R11).
+
+Opening an agent costs the owner 0.0001 NEAR. The contract **sponsors** the rest: a 0.1 NEAR gas fund sent to the new agent account, plus its storage. Sponsorship comes only from the contract's free balance (its sponsor pool, topped up by sending NEAR to the contract), never from escrow, buyers' balances or budgets in flight; when the pool runs dry, opening fails instead. Each wallet may open at most 5 agents, so cheap opens can't drain the pool.
 
 **R22 — The coordinator can only group what agents asked for.** A buyer agent's request (GPU model, minimum VRAM, hours, max price per hour, deadline) is stored on chain with the agent. The operator forms coalitions off-chain, and `register_coalition` checks every member's hours and max price against that agent's stored request. The operator can't invent members, change terms, or add an agent whose request is closed.
 

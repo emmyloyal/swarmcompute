@@ -81,7 +81,8 @@ async function main(): Promise<void> {
     receiverId: contractId,
     actions: [
       actions.createAccount(),
-      actions.transfer(nearToYocto("4")),
+      // Funds escrow storage and the sponsor pool: each new agent gets a 0.1 NEAR gas fund from it.
+      actions.transfer(nearToYocto("8")),
       actions.addFullAccessKey(key.getPublicKey()),
       actions.deployContract(wasm),
       actions.functionCall("new", init, 100n * 10n ** 12n, 0n),

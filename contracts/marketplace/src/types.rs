@@ -265,8 +265,11 @@ pub struct Config {
     pub purchase_count: u32,
     /// What `open_buyer_agent` / `open_seller_agent` costs on top of a buyer's budget.
     pub open_fee: U128,
-    /// The part of `open_fee` sent to the new agent account for its own gas.
+    /// Sent to each new agent account for its own gas, sponsored by the contract.
     pub agent_gas_fund: U128,
+    pub max_agents_per_owner: u32,
+    /// Contract balance not owed to anyone, which sponsors new agents.
+    pub sponsor_pool: U128,
 }
 
 #[near(serializers = [json])]

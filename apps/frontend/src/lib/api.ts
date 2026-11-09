@@ -9,6 +9,8 @@ export interface Meta {
   windows: Windows;
   openFee: string | null;
   agentGasFund: string | null;
+  maxAgentsPerOwner: number | null;
+  sponsorPool: string | null;
   agentNameMaxLength: number;
   host: { tick: number; updatedAt: string; chainTimeNs: string; lastError: string | null };
 }

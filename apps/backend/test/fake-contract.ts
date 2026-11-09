@@ -97,8 +97,10 @@ export class FakeContract implements MarketplaceContract {
       buyer_count: this.buyers.size,
       seller_count: this.sellers.size,
       purchase_count: this.purchaseIds.length,
-      open_fee: "110000000000000000000000",
+      open_fee: "100000000000000000000",
       agent_gas_fund: "100000000000000000000000",
+      max_agents_per_owner: 5,
+      sponsor_pool: "5000000000000000000000000",
     };
   }
   async listBuyers() {

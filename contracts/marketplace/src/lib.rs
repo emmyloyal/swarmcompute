@@ -56,10 +56,15 @@ pub const MAX_DISCOUNT_BPS: u16 = 9_999;
 /// attached gas upfront at a pessimistic price (~0.03 NEAR for a 30 Tgas call, refunded
 /// after), so this must cover that, not just the gas burnt. Anyone can top an agent
 /// account up with a plain transfer.
+///
+/// SPONSORED: paid from the contract's own balance (its sponsor pool, topped up by
+/// plain transfers to the contract), never from escrow or buyers' balances.
 pub const AGENT_GAS_FUND: u128 = 100_000_000_000_000_000_000_000; // 0.1 NEAR
-/// Kept by the contract to cover the agent's record in contract storage.
-pub const AGENT_STORAGE_FEE: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR
-pub const OPEN_FEE: u128 = AGENT_GAS_FUND + AGENT_STORAGE_FEE;
+/// What a user pays to open an agent (on top of a buyer's budget). The contract
+/// sponsors the gas fund and the agent's storage.
+pub const OPEN_FEE: u128 = 100_000_000_000_000_000_000; // 0.0001 NEAR
+/// Sponsored agents per owner wallet, so cheap opens can't drain the sponsor pool.
+pub const MAX_AGENTS_PER_OWNER: u32 = 5;
 /// The only methods an agent's function-call key may call (RULES.md R19).
 pub const AGENT_METHODS: &str = "prepay,commit_bid,reveal_bid,withdraw,leave_coalition";
 const NS_PER_SEC: u64 = 1_000_000_000;
@@ -77,6 +82,7 @@ enum StorageKey {
     Purchases,
     PurchaseIds,
     Auctions,
+    AgentsPerOwner,
 }
 
 #[near(contract_state)]
@@ -98,6 +104,10 @@ pub struct Marketplace {
     purchases: LookupMap<String, Purchase>,
     purchase_ids: Vector<String>,
     auctions: LookupMap<String, String>,
+    /// Agents opened (or being opened) per owner wallet.
+    agents_per_owner: LookupMap<AccountId, u32>,
+    /// Budgets attached to opens still waiting for their account creation callback.
+    pending_budgets: u128,
 }
 
 fn now() -> u64 {
@@ -157,6 +167,8 @@ impl Marketplace {
             purchases: LookupMap::new(StorageKey::Purchases),
             purchase_ids: Vector::new(StorageKey::PurchaseIds),
             auctions: LookupMap::new(StorageKey::Auctions),
+            agents_per_owner: LookupMap::new(StorageKey::AgentsPerOwner),
+            pending_budgets: 0,
         }
     }
 
@@ -193,7 +205,8 @@ impl Marketplace {
     // ------------------------------------------------------------------ opening agents (R19, R20)
 
     /// Open a buyer agent. Attach `OPEN_FEE` plus whatever budget to deposit now.
-    /// Creates `<name>.<this contract>` with a function-call key for `public_key`.
+    /// Creates `<name>.<this contract>` with a function-call key for `public_key`;
+    /// the contract sponsors the agent's gas fund and storage.
     #[payable]
     pub fn open_buyer_agent(&mut self, name: String, public_key: PublicKey, request: Option<BuyerRequest>) {
         self.assert_not_paused();
@@ -202,8 +215,11 @@ impl Marketplace {
         if let Some(r) = &request {
             validate_request(r);
         }
-        let (agent_id, owner) = self.new_agent_id(&name);
         let budget = deposit - OPEN_FEE;
+        // The attached budget is already in the balance but owed to this buyer, not the pool.
+        self.require_sponsorable(budget);
+        let (agent_id, owner) = self.new_agent_id(&name);
+        self.pending_budgets += budget;
         emit(
             "agent_open_started",
             json!({ "agent_id": agent_id, "role": "BUYER", "owner": owner, "public_key": public_key, "budget": U128(budget), "request": request }),
@@ -233,6 +249,7 @@ impl Marketplace {
         require!(env::attached_deposit().as_yoctonear() == OPEN_FEE, "attached deposit must equal the open fee exactly");
         validate_offers(&offers);
         validate_pricing(min_price_per_hour, &strategy);
+        self.require_sponsorable(0);
         let (agent_id, owner) = self.new_agent_id(&name);
         emit(
             "agent_open_started",
@@ -264,6 +281,7 @@ impl Marketplace {
         let ok = Self::promise_succeeded();
         if let Some(mut b) = self.buyers.get(&agent_id).cloned() {
             require!(!b.opened, "agent already opened");
+            self.pending_budgets -= budget.0;
             if ok {
                 b.opened = true;
                 b.available = U128(budget.0);
@@ -273,6 +291,7 @@ impl Marketplace {
                 self.buyers.insert(agent_id, b);
             } else {
                 self.buyers.remove(&agent_id);
+                self.release_owner_slot(&b.owner);
                 self.refund_failed_open(&agent_id, "BUYER", b.owner, budget.0 + OPEN_FEE);
             }
         } else if let Some(mut s) = self.sellers.get(&agent_id).cloned() {
@@ -284,6 +303,7 @@ impl Marketplace {
                 self.sellers.insert(agent_id, s);
             } else {
                 self.sellers.remove(&agent_id);
+                self.release_owner_slot(&s.owner);
                 self.refund_failed_open(&agent_id, "SELLER", s.owner, OPEN_FEE);
             }
         } else {
@@ -897,6 +917,8 @@ impl Marketplace {
             purchase_count: self.purchase_ids.len(),
             open_fee: U128(OPEN_FEE),
             agent_gas_fund: U128(AGENT_GAS_FUND),
+            max_agents_per_owner: MAX_AGENTS_PER_OWNER,
+            sponsor_pool: U128(self.sponsor_pool()),
         }
     }
 
@@ -907,6 +929,11 @@ impl Marketplace {
             total_escrowed: U128(self.total_escrowed),
             total_balances: U128(self.total_balances),
         }
+    }
+
+    /// How many agents this wallet has opened (sponsored opens are capped per owner).
+    pub fn agents_of_owner(&self, owner: AccountId) -> u32 {
+        self.agents_per_owner.get(&owner).copied().unwrap_or(0)
     }
 
     pub fn get_buyer(&self, buyer_id: String) -> Option<Buyer> {
@@ -971,7 +998,7 @@ impl Marketplace {
     }
 
     /// `<name>.<this contract>`, not yet used by any agent; the caller becomes the owner.
-    fn new_agent_id(&self, name: &str) -> (AccountId, AccountId) {
+    fn new_agent_id(&mut self, name: &str) -> (AccountId, AccountId) {
         require!(is_agent_name(name), "invalid agent name: 2-32 chars of a-z, 0-9, single - or _ between them");
         let me = env::current_account_id();
         let agent_id: AccountId = format!("{name}.{me}").parse().unwrap_or_else(|_| env::panic_str("agent account id is too long"));
@@ -979,10 +1006,31 @@ impl Marketplace {
         let owner = env::predecessor_account_id();
         require!(owner != me, "the contract cannot own an agent");
         require!(!owner.is_sub_account_of(&me), "an agent cannot own an agent");
+        let n = self.agents_of_owner(owner.clone());
+        require!(n < MAX_AGENTS_PER_OWNER, "this wallet already has the maximum number of agents");
+        self.agents_per_owner.insert(owner.clone(), n + 1);
         (agent_id, owner)
     }
 
-    /// Create the agent's account with a gas allowance and its one function-call key.
+    /// Checked before any state changes: the gas fund comes from the pool only, so
+    /// escrow, buyers' balances, pending budgets and `incoming` (a budget attached to
+    /// this very call) all stay covered.
+    fn require_sponsorable(&self, incoming: u128) {
+        require!(self.sponsor_pool().saturating_sub(incoming) >= AGENT_GAS_FUND, "the sponsor pool is empty; try again later");
+    }
+
+    fn release_owner_slot(&mut self, owner: &AccountId) {
+        let n = self.agents_of_owner(owner.clone());
+        self.agents_per_owner.insert(owner.clone(), n.saturating_sub(1));
+    }
+
+    /// Contract balance not owed to anyone: what sponsors new agents' gas funds.
+    fn sponsor_pool(&self) -> u128 {
+        let owed = self.total_escrowed + self.total_balances + self.pending_budgets;
+        env::account_balance().as_yoctonear().saturating_sub(Self::storage_cost()).saturating_sub(owed)
+    }
+
+    /// Create the agent's account with a sponsored gas fund and its one function-call key.
     fn create_agent_account(&self, agent_id: AccountId, public_key: PublicKey, budget: u128) {
         Promise::new(agent_id.clone())
             .create_account()
@@ -1140,7 +1188,7 @@ impl Marketplace {
     fn assert_solvent(&self) {
         let balance = env::account_balance().as_yoctonear();
         require!(
-            balance.checked_sub(Self::storage_cost()).map_or(false, |free| free >= self.total_escrowed + self.total_balances),
+            balance.checked_sub(Self::storage_cost()).map_or(false, |free| free >= self.total_escrowed + self.total_balances + self.pending_budgets),
             "insolvent: balance minus storage cost is below escrow plus buyer balances"
         );
     }

@@ -30,7 +30,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 const MILLI: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
-const OPEN_FEE: u128 = 110 * MILLI;
+const OPEN_FEE: u128 = MILLI / 10; // 0.0001 NEAR: the contract sponsors the rest
 const AGENT_GAS_FUND: u128 = 100 * MILLI;
 /// Agents attach 30 Tgas: prepaid gas is charged upfront, and an agent holds only its gas fund.
 const AGENT_TGAS: u64 = 30;

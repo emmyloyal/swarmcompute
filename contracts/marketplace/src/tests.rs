@@ -804,3 +804,65 @@ fn seller_strategy_json_shape() {
     let s = near_sdk::serde_json::to_value(SellerStrategy::AtMinimum).unwrap();
     assert_eq!(s, near_sdk::serde_json::json!({ "kind": "AT_MINIMUM" }));
 }
+
+// ---------------------------------------------------------------------- sponsored opening
+
+#[test]
+fn opening_costs_the_user_0_0001_near_and_is_capped_per_wallet() {
+    let mut t = empty();
+    assert_eq!(OPEN_FEE, 100_000_000_000_000_000_000); // 0.0001 NEAR
+    for i in 0..MAX_AGENTS_PER_OWNER {
+        t.open_buyer(&format!("a{i}"), "alice.testnet", 0, None, true);
+    }
+    assert_eq!(t.view().agents_of_owner(acc("alice.testnet")), MAX_AGENTS_PER_OWNER);
+    panics(|| t.pay("alice.testnet", OPEN_FEE).open_buyer_agent("a9".into(), pk(), None), "maximum number of agents");
+    panics(
+        || t.pay("alice.testnet", OPEN_FEE).open_seller_agent("s9".into(), pk(), vec![offer(GpuModel::A100, 80, 1)], U128(1), SellerStrategy::AtMinimum),
+        "maximum number of agents",
+    );
+    // Other wallets are unaffected.
+    t.open_seller("s1", "bob.testnet", vec![offer(GpuModel::A100, 80, 1)], MILLI);
+    let cfg = t.cfg();
+    assert_eq!((cfg.open_fee.0, cfg.max_agents_per_owner), (OPEN_FEE, MAX_AGENTS_PER_OWNER));
+    t.check_invariants();
+}
+
+#[test]
+fn a_failed_open_gives_the_wallet_its_slot_back() {
+    let mut t = empty();
+    t.open_buyer("b1", "alice.testnet", BUDGET, None, false);
+    assert_eq!(t.view().agents_of_owner(acc("alice.testnet")), 0);
+    assert_eq!(t.view().get_solvency().total_balances.0, 0);
+    t.check_invariants();
+}
+
+#[test]
+fn sponsoring_never_uses_money_owed_to_buyers() {
+    let mut t = empty();
+    t.open_buyer("b1", "alice.testnet", NEAR, None, true);
+    let pool = t.cfg().sponsor_pool.0;
+    assert!(pool >= AGENT_GAS_FUND);
+    // Leave the contract only what it owes (and storage) plus half a gas fund: the pool can't sponsor.
+    let s = t.view().get_solvency();
+    t.balance = s.storage_cost.0 + s.total_escrowed.0 + s.total_balances.0 + AGENT_GAS_FUND / 2;
+    panics(
+        || t.pay("bob.testnet", OPEN_FEE).open_seller_agent("s1".into(), pk(), vec![offer(GpuModel::A100, 80, 1)], U128(1), SellerStrategy::AtMinimum),
+        "sponsor pool is empty",
+    );
+    // Topping the contract up (anyone can send it NEAR) refills the pool.
+    t.balance += AGENT_GAS_FUND;
+    t.open_seller("s1", "bob.testnet", vec![offer(GpuModel::A100, 80, 1)], MILLI);
+    t.check_invariants();
+}
+
+#[test]
+fn a_buyers_own_budget_never_counts_as_sponsor_money() {
+    let mut t = empty();
+    let s = t.view().get_solvency();
+    // The pool is just short of one gas fund; a big budget attached to the call must not make up the difference.
+    // (The 0.0001 NEAR fee itself does go to the pool, so fall short by more than that.)
+    t.balance = s.storage_cost.0 + AGENT_GAS_FUND - OPEN_FEE - 1;
+    let budget = 5 * NEAR;
+    // The mocked runtime adds the attached deposit to the contract balance itself, as the chain does.
+    panics(|| t.pay("alice.testnet", OPEN_FEE + budget).open_buyer_agent("b1".into(), pk(), None), "sponsor pool is empty");
+}

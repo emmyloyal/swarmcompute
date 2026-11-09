@@ -6,8 +6,8 @@
  * key: it asks the wallet to sign. Agents' own keys live only in the market
  * host (R19).
  *
- * Selector code loads on first use to keep the main bundle small. A browser
- * wallet (MyNearWallet) leaves the page to approve and comes back with
+ * Wallets: Meteor (extension or web popup) and MyNearWallet. Selector code
+ * loads on first use to keep the main bundle small. A browser wallet may leave the page to approve and comes back with
  * `?transactionHashes=…` or `?errorCode=…`; that result is shown on return.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
@@ -66,14 +66,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     // The selector's NEAR libraries expect Node's global Buffer.
     const { Buffer } = await import("buffer");
     (globalThis as { Buffer?: typeof Buffer }).Buffer ??= Buffer;
-    const [{ setupWalletSelector }, { setupModal }, { setupMyNearWallet }] = await Promise.all([
+    // …and Meteor's SDK reads process.env.
+    (globalThis as { process?: { env: Record<string, string> } }).process ??= { env: {} };
+    const [{ setupWalletSelector }, { setupModal }, { setupMeteorWallet }, { setupMyNearWallet }] = await Promise.all([
       import("@near-wallet-selector/core"),
       import("@near-wallet-selector/modal-ui"),
+      import("@near-wallet-selector/meteor-wallet"),
       import("@near-wallet-selector/my-near-wallet"),
     ]);
     await import("@near-wallet-selector/modal-ui/styles.css");
     // Testnet only (R1). No contractId: sign-in adds no key; every call is approved in the wallet.
-    const selector = await setupWalletSelector({ network: "testnet", modules: [setupMyNearWallet()] });
+    const selector = await setupWalletSelector({ network: "testnet", modules: [setupMeteorWallet(), setupMyNearWallet()] });
     const modal = setupModal(selector, { description: "Connect a NEAR Testnet wallet to open and manage your agents. You approve every transaction in your wallet." });
     selector.store.observable.subscribe((s) => setAccount(s.accounts.find((a) => a.active)?.accountId ?? null));
     setAccount(selector.store.getState().accounts.find((a) => a.active)?.accountId ?? null);

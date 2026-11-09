@@ -63,6 +63,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const init = useCallback(async () => {
     if (sel.current) return sel.current;
+    // The selector's NEAR libraries expect Node's global Buffer.
+    const { Buffer } = await import("buffer");
+    (globalThis as { Buffer?: typeof Buffer }).Buffer ??= Buffer;
     const [{ setupWalletSelector }, { setupModal }, { setupMyNearWallet }] = await Promise.all([
       import("@near-wallet-selector/core"),
       import("@near-wallet-selector/modal-ui"),

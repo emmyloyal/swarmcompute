@@ -113,8 +113,7 @@ export function LoadState({ error, loading, label }: { error?: string; loading: 
   if (error) {
     return (
       <div className="skeleton err">
-        Couldn't load {label}: {error}. This page needs the SwarmCompute market host: run <code>pnpm --filter @swarmcompute/backend start</code> locally,
-        or, for a deployed site, build the frontend with <code>VITE_BACKEND_URL</code> set to where the host runs.
+        Couldn't load {label}: {error}
       </div>
     );
   }

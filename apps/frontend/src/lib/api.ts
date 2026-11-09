@@ -94,18 +94,21 @@ export function useHostOrChain<T>(path: string, pollMs: number, fallback: () => 
     let alive = true;
     let timer: number | undefined;
     const run = async () => {
+      let next = pollMs;
       try {
         const data = await getJson<T>(path);
         if (alive) set({ data, error: undefined, loading: false, at: Date.now() });
       } catch (hostErr) {
+        // Reading the chain directly costs public-RPC quota: refresh less often.
+        next = Math.max(pollMs, 15_000);
         try {
           const data = await fallback();
           if (alive) set({ data, error: undefined, loading: false, at: Date.now() });
         } catch (chainErr) {
-          if (alive) set((s) => ({ ...s, loading: false, error: `${(hostErr as Error).message}; reading the contract directly also failed: ${(chainErr as Error).message}` }));
+          if (alive) set((s) => ({ ...s, loading: false, error: `the market host isn't reachable, and reading the contract directly failed too (${(chainErr as Error).message}). Retrying shortly.` }));
         }
       }
-      if (alive) timer = window.setTimeout(run, pollMs);
+      if (alive) timer = window.setTimeout(run, next);
     };
     void run();
     return () => {

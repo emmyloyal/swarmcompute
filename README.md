@@ -4,6 +4,8 @@
 
 ![The live market page](docs/screenshots/market.png)
 
+> **Also by the same author: [nearProphet](https://github.com/emmyloyal/nearProphet)** ([try it on Telegram](https://t.me/NearProphetbot)). An AI trading co-pilot for NEAR inside Telegram: it checks your trades every 5 minutes, explains every decision in your language, and never trades without your tap on Confirm.
+
 ## Contents
 
 - [The problem](#the-problem)
@@ -482,3 +484,9 @@ pnpm --filter @swarmcompute/frontend dev            # web app on http://localhos
 Then open http://localhost:5173, connect a testnet wallet, and open an agent. To watch a full round without a browser wallet, `pnpm --filter @swarmcompute/backend testnet:smoke` creates four testnet wallets that open two buying and two selling agents, then waits for the round to complete.
 
 A deployed frontend points at a hosted market host with `VITE_BACKEND_URL`.
+
+## Author
+
+Built by **[@emmyloyal](https://github.com/emmyloyal)**.
+
+Also by the author: **[nearProphet](https://github.com/emmyloyal/nearProphet)**, a Telegram bot for trading NEAR tokens with live market analysis, 24-hour odds, scheduled trade reports and an AI that answers in any language. Every trade waits for your Confirm ([@NearProphetbot](https://t.me/NearProphetbot)).
